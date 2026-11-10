@@ -30,7 +30,7 @@ PLAYER_KEYS = (
     "kills", "deaths", "assists", "last_hits", "denies", "gold_per_min", "xp_per_min",
     "net_worth", "total_gold", "hero_damage", "tower_damage", "hero_healing",
     "lane_role", "is_roaming", "obs_placed", "sen_placed", "observer_kills", "sentry_kills",
-    "stuns", "camps_stacked", "benchmarks", "rank_tier",
+    "stuns", "camps_stacked", "benchmarks", "rank_tier", "ability_upgrades_arr",
 )  # fmt: skip
 
 UNPARSED_TTL = 10 * 60  # re-fetch unparsed matches after 10 min
@@ -68,6 +68,7 @@ class OpenDota:
         self.sem = asyncio.Semaphore(concurrency)
         self.client = httpx.AsyncClient(base_url=BASE, timeout=45.0, headers={"User-Agent": "dota-verdict-bot"})
         self._heroes: dict[int, str] = {}
+        self._abilities: dict[int, str] = {}
 
     async def close(self) -> None:
         await self.client.aclose()
@@ -101,7 +102,7 @@ class OpenDota:
     # -- matches -------------------------------------------------------------
 
     async def match(self, match_id: int, force: bool = False) -> dict | None:
-        key = f"match2:{match_id}"
+        key = f"match3:{match_id}"
         if not force:
             cached = await self.db.cache_get(key, UNPARSED_TTL)
             if cached is not None:
@@ -194,6 +195,33 @@ class OpenDota:
         if data:
             self._heroes = {int(h["id"]): h["localized_name"] for h in data}
         return self._heroes
+
+    async def ability_names(self) -> dict[int, str]:
+        """{ability id: display name}, without talents and AD gold bonuses.
+
+        Built from two OpenDota constants files (~1.5 MB together), so it's
+        only fetched the first time an Ability Draft game is shown, then cached.
+        """
+        if self._abilities:
+            return self._abilities
+        data = await self.db.cache_get("ability_names", HEROES_TTL)
+        if data is None:
+            try:
+                ids = await self._request("GET", "/constants/ability_ids") or {}
+                info = await self._request("GET", "/constants/abilities") or {}
+            except OpenDotaError:
+                return {}
+            data = {}
+            for aid, name in ids.items():
+                if "special_bonus" in name or not aid.isdigit():
+                    continue
+                dname = (info.get(name) or {}).get("dname")
+                if dname:
+                    data[aid] = dname
+            if data:
+                await self.db.cache_put("ability_names", data)
+        self._abilities = {int(k): v for k, v in data.items()}
+        return self._abilities
 
     async def hero_name(self, hero_id: int) -> str:
         return (await self.heroes()).get(hero_id, f"Hero #{hero_id}")

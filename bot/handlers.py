@@ -97,7 +97,12 @@ async def match_card(svc: Service, match_id: int) -> tuple[str, InlineKeyboardMa
         asyncio.create_task(svc.od.request_parse(match_id))  # so Refresh has something to find later
     heroes = await svc.od.heroes()
     friends = svc.friends_map()
-    return render.summary(m, heroes, friends), kb_summary(m, heroes, friends)
+    return render.summary(m, heroes, friends, await abilities_for(svc, m)), kb_summary(m, heroes, friends)
+
+
+async def abilities_for(svc: Service, m: MatchRating) -> dict[int, str] | None:
+    """Ability names, only fetched for Ability Draft games."""
+    return await svc.od.ability_names() if m.game_mode == render.ABILITY_DRAFT else None
 
 
 async def friend_card(svc: Service, f: Friend, n: int) -> tuple[str, InlineKeyboardMarkup | None]:
@@ -310,7 +315,7 @@ async def on_match_button(cb: CallbackQuery, svc: Service) -> None:
             return
         text, kb = render.why(m, r, heroes, friends), kb_back(m)
     else:
-        text, kb = render.summary(m, heroes, friends), kb_summary(m, heroes, friends)
+        text, kb = render.summary(m, heroes, friends, await abilities_for(svc, m)), kb_summary(m, heroes, friends)
 
     await edit(cb, text, kb)
     await cb.answer(note or None, show_alert=bool(note))

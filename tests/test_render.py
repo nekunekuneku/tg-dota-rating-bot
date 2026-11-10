@@ -102,3 +102,20 @@ def test_profile_and_week(match):
     print("\n" + visible(week))
     assert "Carry of the week: Ruslan" in visible(week)
     assert "Ghost" not in week
+
+
+def test_ability_draft_lists_drafted_skills(match):
+    names = {5427: "Thunder Clap", 5428: "Vengeance Aura", 5429: "Nether Swap", 5609: "Gust"}
+    for p in match["players"]:
+        if p["player_slot"] == 128:
+            # repeats and talents (6565 isn't in the names map) are dropped
+            p["ability_upgrades_arr"] = [5427, 5609, 5427, 5428, 5429, 6565, 5429]
+    friends = {1128: "Nick"}
+
+    match["game_mode"] = 18
+    text = visible(render.summary(rate_match(match), HEROES, friends, names))
+    print("\n" + text)
+    assert "🎲 Thunder Clap · Gust · Vengeance Aura · Nether Swap" in text
+
+    match["game_mode"] = 22  # not AD: no skills line even if names are passed
+    assert "🎲" not in render.summary(rate_match(match), HEROES, friends, names)

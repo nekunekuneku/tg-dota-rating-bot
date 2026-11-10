@@ -105,6 +105,7 @@ class PlayerRating:
     verdict: str = "OK"
     blame: float | None = None  # share of the losing team's blame, 0..1
     name: str | None = None  # in-game persona name if public
+    abilities: list[int] = field(default_factory=list)  # ability ids in the order first levelled
 
     @property
     def ruin_meter(self) -> float:
@@ -493,6 +494,7 @@ def rate_match(match: dict) -> MatchRating:
             skipped=skipped,
             failures=failures,
             name=p.get("personaname"),
+            abilities=list(dict.fromkeys(p.get("ability_upgrades_arr") or [])),
         )
         r.verdict = verdict_for(r)
         ratings.append(r)

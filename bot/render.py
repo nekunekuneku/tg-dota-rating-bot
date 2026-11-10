@@ -69,7 +69,22 @@ def header(m: MatchRating) -> str:
     )
 
 
-def squad_lines(side: list[PlayerRating], won: bool, mvp_slot: int | None, heroes: dict[int, str], friends: dict[int, str]) -> list[str]:
+ABILITY_DRAFT = 18
+
+
+def drafted(r: PlayerRating, abilities: dict[int, str]) -> str:
+    """'Thunder Clap · Vengeance Aura · Nether Swap · Gust' (talents already filtered out)."""
+    return " · ".join(escape(abilities[a]) for a in r.abilities if a in abilities)
+
+
+def squad_lines(
+    side: list[PlayerRating],
+    won: bool,
+    mvp_slot: int | None,
+    heroes: dict[int, str],
+    friends: dict[int, str],
+    abilities: dict[int, str] | None = None,
+) -> list[str]:
     """Comments for the friends on one team.
 
     Win:  best friend = MVP (if they're the match MVP) or "best of us", with
@@ -101,11 +116,15 @@ def squad_lines(side: list[PlayerRating], won: bool, mvp_slot: int | None, heroe
         if not (solo and best_ok):
             notes[worst.slot] = ("🗑", "griefer", worst.worst_stat())
 
-    # Match stats first, one line per friend...
-    lines = [
-        f"{who(r, heroes, friends)} · pos {r.position} · {r.kda} · <b>{round(r.score)}</b> ({signed(r.ruin_meter)})"
-        for r in side
-    ]
+    # Match stats first, one line per friend (plus drafted skills in Ability Draft)...
+    lines = []
+    for r in side:
+        lines.append(
+            f"{who(r, heroes, friends)} · pos {r.position} · {r.kda} · <b>{round(r.score)}</b> ({signed(r.ruin_meter)})"
+        )
+        skills = drafted(r, abilities) if abilities else ""
+        if skills:
+            lines.append(f"      🎲 {skills}")
     # ...then the comments underneath.
     comments = []
     for r in side:
@@ -122,7 +141,12 @@ def squad_lines(side: list[PlayerRating], won: bool, mvp_slot: int | None, heroe
     return lines
 
 
-def summary(m: MatchRating, heroes: dict[int, str], friends: dict[int, str]) -> str:
+def summary(
+    m: MatchRating, heroes: dict[int, str], friends: dict[int, str], abilities: dict[int, str] | None = None
+) -> str:
+    """abilities: pass OpenDota.ability_names() for Ability Draft games to list drafted skills."""
+    if m.game_mode != ABILITY_DRAFT:
+        abilities = None
     ours = [r for r in m.players if r.account_id and r.account_id in friends]
     mvp_slot = m.mvp.slot if m.mvp else None
     link = f"{mode_name(m)} · <a href=\"https://www.opendota.com/matches/{m.match_id}\">#{m.match_id}</a>"
@@ -134,14 +158,14 @@ def summary(m: MatchRating, heroes: dict[int, str], friends: dict[int, str]) -> 
         won = ours[0].won
         team = "Radiant" if we_radiant else "Dire"
         lines = [f"{'✅ <b>We won</b>' if won else '❌ <b>We lost</b>'} as {team} · {score}", link, ""]
-        lines += squad_lines(ours, won, mvp_slot, heroes, friends)
+        lines += squad_lines(ours, won, mvp_slot, heroes, friends, abilities)
     elif len(sides) == 2:
         lines = [f"⚔️ <b>Friends on both sides</b> · {score}", link]
         for radiant in (True, False):
             side = [r for r in ours if r.is_radiant == radiant]
             won = side[0].won
             lines += ["", f"<b>{'Radiant' if radiant else 'Dire'}</b> {'✅' if won else '❌'}"]
-            lines += squad_lines(side, won, mvp_slot, heroes, friends)
+            lines += squad_lines(side, won, mvp_slot, heroes, friends, abilities)
     else:
         # Nobody from the squad: plain summary of the match.
         lines = [header(m), ""]

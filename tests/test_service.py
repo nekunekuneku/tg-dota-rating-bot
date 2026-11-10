@@ -44,7 +44,7 @@ def test_last_match_flow_and_cache(tmp_path):
         m = await svc.rate(mid)
         assert m.player_by_account(1000).verdict == "Threw?"
 
-        cached = await db.cache_get(f"match2:{mid}", None)
+        cached = await db.cache_get(f"match3:{mid}", None)
         assert "huge_log" not in cached["players"][0]
 
         await svc.rate(mid)  # second call served from cache
@@ -86,7 +86,7 @@ def test_stub_match_is_not_rated_or_cached(tmp_path):
     async def go():
         db, od, svc = await make_service(tmp_path, lambda req: httpx.Response(200, json=stub))
         assert await svc.rate(5) is None
-        assert await db.cache_get("match2:5", None) is None
+        assert await db.cache_get("match3:5", None) is None
         await od.close()
         await db.close()
 
