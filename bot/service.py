@@ -14,6 +14,7 @@ from .opendota import OpenDota, OpenDotaError
 from .scoring import MatchRating, PlayerRating, rate_match
 
 STEAM64_BASE = 76561197960265728
+REFRESH_EVERY = 5 * 60
 
 
 @dataclass(frozen=True)
@@ -84,6 +85,20 @@ class Service:
         self.db = db
         self.od = od
         self.roster = roster or []
+        self._nudged: dict[int, float] = {}
+
+    def nudge(self, account_ids) -> None:
+        """Ask OpenDota (in the background) to pull these players' newest games from Valve.
+
+        OpenDota only auto-fetches players who use its site, so without this a
+        fresh game can take hours to appear. The refresh takes OpenDota a minute
+        or so, so it helps the *next* lookup. At most once per player per 5 min.
+        """
+        now = time.time()
+        for aid in account_ids:
+            if now - self._nudged.get(aid, 0) > REFRESH_EVERY:
+                self._nudged[aid] = now
+                asyncio.create_task(self.od.refresh_player(aid))
 
     # -- basics --------------------------------------------------------------
 
@@ -98,6 +113,7 @@ class Service:
     # -- one friend ----------------------------------------------------------
 
     async def last_match_id(self, account_id: int) -> int | None:
+        self.nudge([account_id])
         recent = await self.od.recent_matches(account_id, force=True)
         if not recent:
             return None
@@ -117,6 +133,8 @@ class Service:
         recentMatches - the fast endpoint), so a game shows up as long as it's
         in the recent 20 of at least two of the people in it.
         """
+        if force:
+            self.nudge(f.account_id for f in self.roster)
         results = await asyncio.gather(
             *(self.od.recent_matches(f.account_id, force=force) for f in self.roster), return_exceptions=True
         )

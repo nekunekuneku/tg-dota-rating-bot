@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 from aiogram import F, Router
 from aiogram.enums import ChatAction
@@ -97,7 +98,11 @@ def kb_highlights(rows: list[dict], days: int) -> InlineKeyboardMarkup | None:
 # -- shared bits -------------------------------------------------------------
 
 
-async def match_card(svc: Service, match_id: int) -> tuple[str, InlineKeyboardMarkup | None]:
+STALE_AFTER = 45 * 60  # a "latest" game older than this may mean OpenDota hasn't caught up
+
+
+async def match_card(svc: Service, match_id: int, latest: bool = False) -> tuple[str, InlineKeyboardMarkup | None]:
+    """latest=True: this was picked as someone's newest game, so warn if it looks old."""
     m = await svc.rate(match_id)
     if not m:
         asyncio.create_task(svc.od.request_parse(match_id))  # nudges OpenDota to fetch it
@@ -110,7 +115,13 @@ async def match_card(svc: Service, match_id: int) -> tuple[str, InlineKeyboardMa
         asyncio.create_task(svc.od.request_parse(match_id))  # so Refresh has something to find later
     heroes = await svc.od.heroes()
     friends = svc.friends_map()
-    return render.summary(m, heroes, friends, await abilities_for(svc, m)), kb_summary(m, heroes, friends)
+    text = render.summary(m, heroes, friends, await abilities_for(svc, m))
+    if latest and time.time() - (m.start_time + m.duration) > STALE_AFTER:
+        text += (
+            f"\n\n🕐 <i>Newest game OpenDota has, ended {render.ago(m.start_time + m.duration)}. "
+            "Played since? I've asked OpenDota to fetch it, try again in a minute or two.</i>"
+        )
+    return text, kb_summary(m, heroes, friends)
 
 
 async def abilities_for(svc: Service, m: MatchRating) -> dict[int, str] | None:
@@ -124,7 +135,7 @@ async def friend_card(svc: Service, f: Friend, n: int) -> tuple[str, InlineKeybo
         match_id = await svc.last_match_id(f.account_id)
         if not match_id:
             return f"No recent matches for {render.escape(f.name)}. Is Expose Public Match Data on?", None
-        return await match_card(svc, match_id)
+        return await match_card(svc, match_id, latest=True)
     games = await svc.player_games(f.account_id, n, force=True)
     heroes = await svc.od.heroes()
     kb = kb_open([m.match_id for m, _ in games]) if games else None
@@ -136,7 +147,7 @@ async def group_card(svc: Service, n: int) -> tuple[str, InlineKeyboardMarkup | 
         groups = await svc.group_matches(1, force=True)
         if not groups:
             return "No game with 2+ of you together in everyone's last 20 matches.", None
-        return await match_card(svc, groups[0].match_id)
+        return await match_card(svc, groups[0].match_id, latest=True)
     items = await svc.group_history(n, force=True)
     heroes = await svc.od.heroes()
     title = "Last game together" if len(items) == 1 else f"Last {len(items)} games together"
