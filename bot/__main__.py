@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import ssl
 from pathlib import Path
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.types import BotCommand
@@ -28,6 +30,26 @@ def load_dotenv(path: str = ".env") -> None:
         if line and not line.startswith("#") and "=" in line:
             k, v = line.split("=", 1)
             os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+
+
+class EnvProxySession(AiohttpSession):
+    """Honour HTTPS_PROXY / SSL_CERT_FILE (aiohttp ignores them by default).
+
+    Only used when HTTPS_PROXY is set, e.g. behind a corporate or sandbox proxy.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        cafile = os.getenv("SSL_CERT_FILE")
+        if cafile:
+            self._connector_init["ssl"] = ssl.create_default_context(cafile=cafile)
+
+    async def create_session(self):
+        from aiohttp import ClientSession
+
+        if self._session is None or self._session.closed:
+            self._session = ClientSession(connector=self._connector_type(**self._connector_init), trust_env=True)
+        return self._session
 
 
 COMMANDS = [
@@ -56,7 +78,8 @@ async def main() -> None:
     od = OpenDota(db, api_key=os.getenv("OPENDOTA_API_KEY") or None)
     svc = Service(db, od)
 
-    bot = Bot(token, default=DefaultBotProperties(parse_mode=ParseMode.HTML, link_preview_is_disabled=True))
+    session = EnvProxySession() if os.getenv("HTTPS_PROXY") or os.getenv("https_proxy") else None
+    bot = Bot(token, session=session, default=DefaultBotProperties(parse_mode=ParseMode.HTML, link_preview_is_disabled=True))
     dp = Dispatcher(svc=svc)
     dp.include_router(router)
 
