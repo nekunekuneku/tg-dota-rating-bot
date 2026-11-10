@@ -121,12 +121,13 @@ def test_ability_draft_lists_drafted_skills(match):
     assert "🎲" not in render.summary(rate_match(match), HEROES, friends, names)
 
 
-def test_lists_mark_ability_draft(match):
-    match["game_mode"] = 18
-    ad = rate_match(match)
-    match["game_mode"] = 22
-    ap = rate_match(match)
-    text = visible(render.history("Danil", [(ad, ad.player_by_slot(0)), (ap, ap.player_by_slot(0))], HEROES))
+def test_lists_tag_game_mode(match):
+    rated = []
+    for mode, lobby in [(18, 0), (22, 7), (22, 0), (23, 0), (2, 7), (2, 0)]:
+        match["game_mode"], match["lobby_type"] = mode, lobby
+        m = rate_match(match)
+        rated.append((m, m.player_by_slot(0)))
+    text = visible(render.history("Danil", rated, HEROES))
     print("\n" + text)
-    lines = [l for l in text.splitlines() if l[:2] in ("1.", "2.")]
-    assert "Shadow Fiend (AD)" in lines[0] and "(AD)" not in lines[1]
+    tags = [l.split("(")[1].split(")")[0] for l in text.splitlines() if l[:1].isdigit()]
+    assert tags == ["AD", "R", "N", "T", "R", "CM"]

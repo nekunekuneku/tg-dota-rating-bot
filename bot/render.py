@@ -36,6 +36,22 @@ def duration(sec: int) -> str:
     return f"{sec // 60}:{sec % 60:02d}"
 
 
+OTHER_MODE_TAGS = {2: "CM", 3: "RD", 4: "SD", 5: "AR", 16: "CD"}
+
+
+def mode_tag(m: MatchRating) -> str:
+    """Short tag for lists: R ranked, N normal, T turbo, AD ability draft, CM, ..."""
+    if m.game_mode == ABILITY_DRAFT:
+        return "AD"
+    if m.game_mode == 23:
+        return "T"
+    if m.lobby_type == 7:
+        return "R"
+    if m.game_mode in (1, 22):
+        return "N"
+    return OTHER_MODE_TAGS.get(m.game_mode, "?")
+
+
 def mode_name(m: MatchRating) -> str:
     mode = GAME_MODES.get(m.game_mode, f"mode {m.game_mode}")
     lobby = LOBBIES.get(m.lobby_type)
@@ -355,8 +371,7 @@ def history(name: str, games: list[tuple[MatchRating, PlayerRating]], heroes: di
     lines = [f"📜 <b>{escape(name)}</b> · last {n} games · {wins}–{n - wins} · avg {round(avg)}", ""]
     for i, (m, r) in enumerate(games, 1):
         hero = escape(heroes.get(r.hero_id, f"Hero #{r.hero_id}"))
-        if m.game_mode == ABILITY_DRAFT:
-            hero += " (AD)"
+        hero += f" ({mode_tag(m)})"
         lines.append(
             f"{i}. {'✅' if r.won else '❌'} {hero} {r.kda} · <b>{round(r.score)}</b> {verdict_tag(r)} · {ago(m.start_time)}"
         )
@@ -376,8 +391,7 @@ def our_history(items: list, heroes: dict[int, str], friends: dict[int, str], ti
         ours = [r for r in m.players if r.account_id in friends]
         sides = {r.won for r in ours}
         result = "⚔️" if len(sides) > 1 else ("✅" if ours and ours[0].won else "❌")
-        ad = " · AD" if m.game_mode == ABILITY_DRAFT else ""
-        lines.append(f"{i}. {result} {duration(m.duration)} · {ago(m.start_time)}{ad}")
+        lines.append(f"{i}. {result} {duration(m.duration)} · {ago(m.start_time)} · {mode_tag(m)}")
         parts = [f"{escape(friends[r.account_id])} {round(r.score)}{VERDICT_EMOJI.get(r.verdict, '')}" for r in sorted(ours, key=lambda r: -r.score)]
         lines.append("    " + " · ".join(parts))
     return "\n".join(lines)

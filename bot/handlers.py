@@ -28,6 +28,7 @@ HELP = (
     "/match <code>&lt;id&gt;</code> – rate any match\n"
     "/week, /month – leaderboard\n"
     "/scoring – how the score is calculated\n\n"
+    "In lists: R ranked · N normal · T turbo · AD ability draft.\n"
     "Examples: <code>/last nick</code>, <code>/last nick 5</code>, <code>/ourlast 5</code>. "
     "Leave the name out and I'll show buttons to pick who."
 )
