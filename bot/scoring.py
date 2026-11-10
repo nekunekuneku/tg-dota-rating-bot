@@ -79,6 +79,7 @@ class Component:
     score: float  # 0..100, 50 = normal
     weight: int  # from WEIGHTS for this player's position
     detail: str  # human-readable "why"
+    stat: str = ""  # short version for the match card, e.g. "14 deaths, 3.5 per 10 min"
 
     @property
     def label(self) -> str:
@@ -113,6 +114,18 @@ class PlayerRating:
     @property
     def kda(self) -> str:
         return f"{self.kills}/{self.deaths}/{self.assists}"
+
+    def best_stat(self) -> Component | None:
+        """The component that helped this score most, given the role weights."""
+        if not self.components:
+            return None
+        return max(self.components, key=lambda c: (c.score - 50) * c.weight)
+
+    def worst_stat(self) -> Component | None:
+        """The component that hurt this score most, given the role weights."""
+        if not self.components:
+            return None
+        return min(self.components, key=lambda c: (c.score - 50) * c.weight)
 
 
 @dataclass
@@ -244,6 +257,17 @@ def _pct_text(pct: float) -> str:
     return f"better than {round(pct * 100)}% of games on this hero"
 
 
+def _rank(pct: float) -> str:
+    """0.92 -> 'top 8% for the hero', 0.1 -> 'bottom 10% for the hero'."""
+    if pct >= 0.5:
+        return f"top {max(1, round((1 - pct) * 100))}% for the hero"
+    return f"bottom {max(1, round(pct * 100))}% for the hero"
+
+
+def _k(x: float) -> str:
+    return f"{x / 1000:.1f}k" if x >= 1000 else f"{round(x)}"
+
+
 def _farm(p: dict, pos: int) -> Component | None:
     keys = ["gold_per_min", "xp_per_min"] + (["last_hits_per_min"] if pos <= 3 else [])
     pcts = [_bench_pct(p, k) for k in keys]
@@ -255,7 +279,8 @@ def _farm(p: dict, pos: int) -> Component | None:
     if pos <= 3:
         detail += f", {p.get('last_hits', 0)} LH"
     detail += f" - {_pct_text(avg)}"
-    return Component("farm", avg * 100, 0, detail)
+    stat = f"{p.get('gold_per_min', 0)} GPM, farm in the {_rank(avg)}"
+    return Component("farm", avg * 100, 0, detail, stat)
 
 
 def _damage(p: dict, pos: int) -> Component | None:
@@ -268,7 +293,7 @@ def _damage(p: dict, pos: int) -> Component | None:
     if raw is not None:
         detail += f" ({round(raw)}/min)"
     detail += f" - {_pct_text(pct)}"
-    return Component("damage", pct * 100, 0, detail)
+    return Component("damage", pct * 100, 0, detail, f"{_k(dmg)} hero damage, {_rank(pct)}")
 
 
 def _buildings(p: dict, pos: int) -> Component | None:
@@ -276,7 +301,9 @@ def _buildings(p: dict, pos: int) -> Component | None:
     if pct is None:
         return None
     td = p.get("tower_damage") or 0
-    return Component("buildings", pct * 100, 0, f"{td:,} building damage - {_pct_text(pct)}")
+    return Component(
+        "buildings", pct * 100, 0, f"{td:,} building damage - {_pct_text(pct)}", f"{_k(td)} building damage, {_rank(pct)}"
+    )
 
 
 def _kp(p: dict, pos: int, team_kills: int) -> Component | None:
@@ -287,7 +314,11 @@ def _kp(p: dict, pos: int, team_kills: int) -> Component | None:
     norm = KP_NORM[pos]
     score = around_norm(kp, norm, KP_SPREAD)
     return Component(
-        "kp", score, 0, f"in {round(kp * 100)}% of team kills (normal for pos {pos}: {round(norm * 100)}%)"
+        "kp",
+        score,
+        0,
+        f"in {round(kp * 100)}% of team kills (normal for pos {pos}: {round(norm * 100)}%)",
+        f"in {round(kp * 100)}% of team kills (pos {pos} normal: {round(norm * 100)}%)",
     )
 
 
@@ -298,18 +329,28 @@ def _deaths(p: dict, pos: int, minutes: float) -> Component | None:
     per10 = d / minutes * 10
     norm = DEATHS_NORM[pos]
     score = around_norm(per10, norm, DEATHS_SPREAD, higher_is_better=False)
-    return Component("deaths", score, 0, f"{d} deaths = {per10:.1f} per 10 min (normal for pos {pos}: {norm})")
+    return Component(
+        "deaths",
+        score,
+        0,
+        f"{d} deaths = {per10:.1f} per 10 min (normal for pos {pos}: {norm})",
+        f"{d} deaths, {per10:.1f} per 10 min (pos {pos} normal: {norm})",
+    )
 
 
 def _impact(p: dict, pos: int, minutes: float) -> Component | None:
     """Stuns (parsed replays only) and healing (only for heroes that heal)."""
-    parts: list[tuple[float, str]] = []
+    parts: list[tuple[float, str, str]] = []
 
     stuns = p.get("stuns")
     if stuns is not None and minutes > 0:
         per_min = float(stuns) / minutes
         parts.append(
-            (around_norm(per_min, STUN_NORM, STUN_SPREAD), f"{float(stuns):.0f}s of stuns ({per_min:.1f}s/min)")
+            (
+                around_norm(per_min, STUN_NORM, STUN_SPREAD),
+                f"{float(stuns):.0f}s of stuns ({per_min:.1f}s/min)",
+                f"{float(stuns):.0f}s of stuns",
+            )
         )
 
     heal_raw = _bench_raw(p, "hero_healing_per_min")
@@ -317,12 +358,13 @@ def _impact(p: dict, pos: int, minutes: float) -> Component | None:
     # Healing only counts for heroes that actually heal - otherwise a
     # 0-healing Sniper would get a random percentile.
     if heal_pct is not None and heal_raw is not None and heal_raw >= 30:
-        parts.append((heal_pct * 100, f"{p.get('hero_healing', 0):,} healing - {_pct_text(heal_pct)}"))
+        heal = p.get("hero_healing") or 0
+        parts.append((heal_pct * 100, f"{heal:,} healing - {_pct_text(heal_pct)}", f"{_k(heal)} healing, {_rank(heal_pct)}"))
 
     if not parts:
         return None
-    score = sum(s for s, _ in parts) / len(parts)
-    return Component("impact", score, 0, "; ".join(d for _, d in parts))
+    score = sum(s for s, _, _ in parts) / len(parts)
+    return Component("impact", score, 0, "; ".join(d for _, d, _ in parts), ", ".join(st for _, _, st in parts))
 
 
 def _vision(p: dict, pos: int, minutes: float) -> Component | None:
@@ -341,6 +383,7 @@ def _vision(p: dict, pos: int, minutes: float) -> Component | None:
         score,
         0,
         f"{obs} obs, {sen} sentries, {dewards} dewards = {per10:.1f}/10 min (normal for pos {pos}: {norm})",
+        f"{obs + sen} wards, {dewards} dewards",
     )
 
 

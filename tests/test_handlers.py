@@ -95,7 +95,7 @@ def test_commands_and_buttons(tmp_path):
         assert [b.text for b in r.reply_markup.inline_keyboard[0]] == ["Danil", "Ruslan", "Solo"]
         assert r.reply_markup.inline_keyboard[0][0].callback_data == "p:0:1"
         card = await tap("p:0:1")
-        assert isinstance(card, EditMessageText) and "Threw?" in card.text
+        assert isinstance(card, EditMessageText) and "Friends on both sides" in card.text
 
         # /last with a name
         r = await say("/last danil")
@@ -104,14 +104,14 @@ def test_commands_and_buttons(tmp_path):
         assert "No one" in (await say("/last bob")).text
 
         # buttons on the card
-        for data, expect in [(f"m:{MID}:w0", "weight"), (f"m:{MID}:a", "<pre>"), (f"m:{MID}:r", "MVP")]:
+        for data, expect in [(f"m:{MID}:w0", "weight"), (f"m:{MID}:a", "<pre>"), (f"m:{MID}:r", "Friends on both sides")]:
             assert expect in (await tap(data)).text, data
 
         # /last N: one line per game + number buttons that open the card
         r = await say("/last ruslan 5")
         assert "Ruslan" in r.text and "1. " in r.text
         assert r.reply_markup.inline_keyboard[0][0].callback_data == f"o:{MID}"
-        assert "MVP" in (await tap(f"o:{MID}")).text
+        assert "Friends on both sides" in (await tap(f"o:{MID}")).text
 
         # picker remembers the count: "/last 3" -> tap a name -> list, not a card
         r = await say("/last 3")

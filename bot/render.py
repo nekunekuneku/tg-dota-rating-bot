@@ -69,24 +69,82 @@ def header(m: MatchRating) -> str:
     )
 
 
+def squad_lines(side: list[PlayerRating], won: bool, mvp_slot: int | None, heroes: dict[int, str], friends: dict[int, str]) -> list[str]:
+    """Comments for the friends on one team.
+
+    Win:  best friend = MVP (if they're the match MVP) or "best of us", with
+          their best stat. Worst friend = "got carried", plus their worst stat
+          if they were below normal.
+    Loss: everyone shows their worst stat, except the best friend if they
+          were above normal (they show their best stat). Worst = "griefer".
+    """
+    side = sorted(side, key=lambda r: -r.score)
+    best, worst = side[0], side[-1]
+    solo = len(side) == 1
+    notes: dict[int, tuple[str, str, object]] = {}  # slot -> (icon, tag, Component | None)
+    good_stat: set[int] = set()  # slots whose stat is shown as a strength
+
+    if won:
+        for r in side:
+            notes[r.slot] = ("▫️", "", None)
+        if not solo:
+            notes[worst.slot] = ("🎒", "got carried", worst.worst_stat() if worst.ruin_meter < 0 else None)
+        good = best.best_stat()
+        good_stat.add(best.slot)
+        notes[best.slot] = (
+            ("⭐", "MVP") if best.slot == mvp_slot else ("💪", "best of us")
+        ) + ((good if good and good.score > 50 else None),)
+    else:
+        for r in side:
+            notes[r.slot] = ("👎", "", r.worst_stat())
+        best_ok = best.ruin_meter > 0
+        if best_ok:
+            notes[best.slot] = ("👍", "best of us", best.best_stat())
+            good_stat.add(best.slot)
+        if not (solo and best_ok):
+            notes[worst.slot] = ("🗑", "griefer", worst.worst_stat())
+
+    lines = []
+    for r in side:
+        icon, tag, stat = notes[r.slot]
+        tag = f" · <b>{tag}</b>" if tag else ""
+        lines.append(f"{icon} {who(r, heroes, friends)} · pos {r.position} · {r.kda} · <b>{round(r.score)}</b>{tag}")
+        if stat:
+            arrow = "📈" if r.slot in good_stat else "📉"
+            lines.append(f"      {arrow} {escape(stat.stat)}")
+    return lines
+
+
 def summary(m: MatchRating, heroes: dict[int, str], friends: dict[int, str]) -> str:
-    lines = [header(m), ""]
-
     ours = [r for r in m.players if r.account_id and r.account_id in friends]
-    for r in sorted(ours, key=lambda r: -r.score):
-        mark = "🟢" if r.won else "🔴"
-        lines.append(f"{mark} {who(r, heroes, friends)} · pos {r.position} · {r.kda}")
-        lines.append(f"     <b>{round(r.score)}</b> {verdict_tag(r)} ({signed(r.ruin_meter)})")
-    if ours:
-        lines.append("")
+    mvp_slot = m.mvp.slot if m.mvp else None
+    link = f"{mode_name(m)} · <a href=\"https://www.opendota.com/matches/{m.match_id}\">#{m.match_id}</a>"
+    score = f"{m.radiant_score}–{m.dire_score} · {duration(m.duration)}"
+    sides = {r.is_radiant for r in ours}
 
-    if m.mvp:
-        lines.append(f"⭐ MVP: {who(m.mvp, heroes, friends)} — {round(m.mvp.score)}")
-    if m.best_loser:
-        lines.append(f"🛡 Best on losing side: {who(m.best_loser, heroes, friends)} — {round(m.best_loser.score)}")
-    for r in m.threw[:2]:
-        blame = f" · {round(r.blame * 100)}% of the blame" if r.blame else ""
-        lines.append(f"💀 Threw?: {who(r, heroes, friends)} — {round(r.score)}{blame}")
+    if len(sides) == 1:
+        we_radiant = ours[0].is_radiant
+        won = ours[0].won
+        team = "Radiant" if we_radiant else "Dire"
+        lines = [f"{'✅ <b>We won</b>' if won else '❌ <b>We lost</b>'} as {team} · {score}", link, ""]
+        lines += squad_lines(ours, won, mvp_slot, heroes, friends)
+    elif len(sides) == 2:
+        lines = [f"⚔️ <b>Friends on both sides</b> · {score}", link]
+        for radiant in (True, False):
+            side = [r for r in ours if r.is_radiant == radiant]
+            won = side[0].won
+            lines += ["", f"<b>{'Radiant' if radiant else 'Dire'}</b> {'✅' if won else '❌'}"]
+            lines += squad_lines(side, won, mvp_slot, heroes, friends)
+    else:
+        # Nobody from the squad: plain summary of the match.
+        lines = [header(m), ""]
+        if m.mvp:
+            lines.append(f"⭐ MVP: {who(m.mvp, heroes, friends)} — {round(m.mvp.score)}")
+        if m.best_loser:
+            lines.append(f"🛡 Best on losing side: {who(m.best_loser, heroes, friends)} — {round(m.best_loser.score)}")
+        for r in m.threw[:2]:
+            blame = f" · {round(r.blame * 100)}% of the blame" if r.blame else ""
+            lines.append(f"💀 Threw?: {who(r, heroes, friends)} — {round(r.score)}{blame}")
 
     if not m.parsed:
         lines.append("\n<i>Preliminary: replay not parsed yet, so wards and stuns aren't counted.</i>")
@@ -106,7 +164,7 @@ def all_players(m: MatchRating, heroes: dict[int, str], friends: dict[int, str])
             mark = "▸" if r.account_id and r.account_id in friends else " "
             rows.append(f"{mark}{r.position} {hero:<11} {r.kda:>8} {round(r.score):>3} {VERDICT_EMOJI.get(r.verdict, '')}")
         lines.append("<pre>" + escape("\n".join(rows)) + "</pre>")
-    lines.append("<i>▸ = linked friend · number = score (50 is normal)</i>")
+    lines.append("<i>▸ = friend · number = score (50 is normal)</i>")
     return "\n".join(lines)
 
 
