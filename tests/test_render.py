@@ -131,3 +131,19 @@ def test_lists_tag_game_mode(match):
     print("\n" + text)
     tags = [l.split("(")[1].split(")")[0] for l in text.splitlines() if l[:1].isdigit()]
     assert tags == ["AD", "R", "N", "T", "R", "CM"]
+
+
+def test_week_links_game_and_shame(match):
+    from bot.handlers import kb_highlights
+
+    m = rate_match(match)
+    rows = [
+        {"name": "Danil", "games": [(m, m.player_by_slot(0)), (m, m.player_by_slot(1))]},
+        {"name": "Ruslan", "games": [(m, m.player_by_slot(129)), (m, m.player_by_slot(128))]},
+    ]
+    week = render.week(rows, HEROES, 7)
+    assert week.count('href="https://www.opendota.com/matches/8000000001"') == 2
+    month = visible(render.week(rows, HEROES, 30))
+    assert "Shame of the month" in month and "of the week" not in month
+    # same match for both here, so only one button
+    assert [b.callback_data for b in kb_highlights(rows, 7).inline_keyboard[0]] == ["o:8000000001"]

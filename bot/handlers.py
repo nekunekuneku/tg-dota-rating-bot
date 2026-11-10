@@ -82,6 +82,18 @@ def kb_open(match_ids: list[int]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[buttons[i : i + 5] for i in range(0, len(buttons), 5)])
 
 
+def kb_highlights(rows: list[dict], days: int) -> InlineKeyboardMarkup | None:
+    """Buttons that open the game / shame of the week as full cards."""
+    best, worst = render.highlights(rows)
+    if not best:
+        return None
+    period = "week" if days <= 7 else "month"
+    buttons = [btn(f"🏆 Game of the {period}", f"o:{best[1].match_id}")]
+    if worst[1].match_id != best[1].match_id:
+        buttons.append(btn(f"🤡 Shame of the {period}", f"o:{worst[1].match_id}"))
+    return InlineKeyboardMarkup(inline_keyboard=[buttons])
+
+
 # -- shared bits -------------------------------------------------------------
 
 
@@ -220,7 +232,7 @@ async def period(message: Message, svc: Service, days: int) -> None:
     try:
         rows = await svc.period(days)
         heroes = await svc.od.heroes()
-        await status.edit_text(render.week(rows, heroes, days))
+        await status.edit_text(render.week(rows, heroes, days), reply_markup=kb_highlights(rows, days))
     except OpenDotaError as e:
         await status.edit_text(str(e))
 

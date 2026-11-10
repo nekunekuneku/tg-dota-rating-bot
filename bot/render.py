@@ -60,6 +60,7 @@ def mode_name(m: MatchRating) -> str:
 
 
 def signed(x: float) -> str:
+    x = round(x, 2) + 0.0  # turns -0.00 into +0.00
     return f"{x:+.2f}".replace("-", "−")
 
 
@@ -317,11 +318,24 @@ def profile(name: str, ratings: list[tuple[MatchRating, PlayerRating]], heroes: 
     return "\n".join(lines)
 
 
+def highlights(rows: list[dict]) -> tuple[tuple | None, tuple | None]:
+    """(game of the period, shame of the period) as (name, MatchRating, PlayerRating)."""
+    every = [(r["name"], m, p) for r in rows for m, p in r["games"]]
+    if not every:
+        return None, None
+    return max(every, key=lambda x: x[2].score), min(every, key=lambda x: x[2].score)
+
+
+def match_link(m: MatchRating) -> str:
+    return f'<a href="https://www.opendota.com/matches/{m.match_id}">#{m.match_id}</a>'
+
+
 def week(rows: list[dict], heroes: dict[int, str], days: int) -> str:
-    """rows: [{name, games:[(MatchRating, PlayerRating)]}] for chat members with games."""
+    """rows: [{name, games:[(MatchRating, PlayerRating)]}] for friends with games."""
     rows = [r for r in rows if r["games"]]
     if not rows:
-        return f"Nobody here played in the last {days} days. Or nobody ran /link yet."
+        return f"Nobody played in the last {days} days. Is Expose Public Match Data on?"
+    period = "week" if days <= 7 else "month"
 
     table = []
     for r in rows:
@@ -347,15 +361,17 @@ def week(rows: list[dict], heroes: dict[int, str], days: int) -> str:
     eligible = [t for t in table if t["n"] >= 2] or table
     if len(eligible) >= 2:
         lines.append("")
-        lines.append(f"🔥 Carry of the week: <b>{escape(eligible[0]['name'])}</b>")
-        lines.append(f"💀 Ruiner of the week: <b>{escape(eligible[-1]['name'])}</b>")
+        lines.append(f"🔥 Carry of the {period}: <b>{escape(eligible[0]['name'])}</b>")
+        lines.append(f"💀 Ruiner of the {period}: <b>{escape(eligible[-1]['name'])}</b>")
 
-    every = [(t["name"], m, p) for t in table for m, p in t["games"]]
-    if every:
-        name, m, p = max(every, key=lambda x: x[2].score)
-        lines.append(f"🏆 Game of the week: {escape(name)} · {escape(heroes.get(p.hero_id, '?'))} {p.kda} — {round(p.score)}")
-        name, m, p = min(every, key=lambda x: x[2].score)
-        lines.append(f"🤡 Shame of the week: {escape(name)} · {escape(heroes.get(p.hero_id, '?'))} {p.kda} — {round(p.score)}")
+    best, worst = highlights(table)
+    for icon, label, hit in (("🏆", "Game", best), ("🤡", "Shame", worst)):
+        if hit:
+            name, m, p = hit
+            lines.append(
+                f"{icon} {label} of the {period}: {escape(name)} · {escape(heroes.get(p.hero_id, '?'))} "
+                f"{p.kda} — {round(p.score)} · {match_link(m)}"
+            )
     return "\n".join(lines)
 
 
