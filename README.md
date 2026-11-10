@@ -65,7 +65,7 @@ cp .env.example .env   # put BOT_TOKEN in it
 python -m bot
 ```
 
-The bot uses long polling, so you don't need a public URL. Any small VPS, a Raspberry Pi or your PC works. Data is stored in `bot.sqlite3`: linked accounts, plus a cache of match data so repeat lookups are instant.
+The bot uses long polling, so you don't need a public URL. Any small VPS, a Raspberry Pi or your PC works. Match data is cached in `bot.sqlite3` so repeat lookups are instant.
 
 The OpenDota free tier (no key) is enough for a friend group. The first `/month` call for a big group can take a minute because it fetches every match once. After that, matches come from the cache.
 
