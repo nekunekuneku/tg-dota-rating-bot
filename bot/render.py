@@ -6,9 +6,14 @@ buttons ("All players", "Why?") instead of being dumped up front.
 
 from __future__ import annotations
 
-from html import escape
+from html import escape as _escape
 
 from .scoring import COMPONENT_LABELS, MatchRating, PlayerRating
+
+def escape(text: str) -> str:
+    """Telegram HTML only needs <, > and & escaped; leave quotes readable."""
+    return _escape(text, quote=False)
+
 
 VERDICT_EMOJI = {
     "Carried": "🔥",

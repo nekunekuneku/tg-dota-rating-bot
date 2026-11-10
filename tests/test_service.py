@@ -86,3 +86,16 @@ def test_rate_limit_retry(tmp_path):
         await db.close()
 
     run(go())
+
+
+def test_stub_match_is_not_rated_or_cached(tmp_path):
+    stub = {"match_id": 5, "duration": 0, "players": [{"player_slot": s, "hero_id": 0} for s in (0, 1, 2, 3, 4, 128, 129, 130, 131, 132)]}
+
+    async def go():
+        db, od, svc = await make_service(tmp_path, lambda req: httpx.Response(200, json=stub))
+        assert await svc.rate(5) is None
+        assert await db.cache_get("match:5", None) is None
+        await od.close()
+        await db.close()
+
+    run(go())

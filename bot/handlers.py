@@ -100,7 +100,11 @@ async def send_match(message: Message, svc: Service, match_id: int) -> None:
     await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
     m = await svc.rate(match_id)
     if not m:
-        await message.reply("Couldn't find that match on OpenDota. Check the ID, or try again in a minute.")
+        asyncio.create_task(svc.od.request_parse(match_id))  # nudges OpenDota to fetch it
+        await message.reply(
+            "OpenDota doesn't have this match yet. New games usually show up a few minutes "
+            "after they end. Try again soon, or check the match ID."
+        )
         return
     if not m.parsed:
         asyncio.create_task(svc.od.request_parse(match_id))  # so Refresh has something to find later

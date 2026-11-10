@@ -51,6 +51,11 @@ def slim_match(m: dict) -> dict:
     return out
 
 
+def has_real_data(m: dict) -> bool:
+    players = m.get("players") or []
+    return bool(m.get("duration")) and len(players) >= 2 and any(p.get("hero_id") for p in players)
+
+
 class OpenDota:
     def __init__(self, db: DB, api_key: str | None = None, concurrency: int = 4):
         self.db = db
@@ -97,7 +102,9 @@ class OpenDota:
             if cached is not None:
                 return cached
         raw = await self._request("GET", f"/matches/{match_id}")
-        if not raw or not raw.get("players"):
+        if not raw or not has_real_data(raw):
+            # Brand-new matches come back as a stub (no heroes, 0 duration) until
+            # OpenDota pulls them from Valve. Don't cache or rate those.
             return None
         m = slim_match(raw)
         await self._ensure_benchmarks(m)
