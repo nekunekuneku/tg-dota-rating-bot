@@ -10,10 +10,12 @@ All the code is in [`bot/scoring.py`](../bot/scoring.py). Every number below is 
 
 ## 1. Work out each player's position
 
-- **If the replay is parsed**, OpenDota tells us which lane each player was in. The mid is pos 2. The richer safe-laner is pos 1, the poorer one is pos 5. The richer off-laner is pos 3, the poorer one is pos 4.
-- **Otherwise** (or with trilanes or junglers), we sort the team by net worth: richest is pos 1, poorest is pos 5.
+- **If the replay is parsed**, OpenDota tells us which lane each player was in. The mid is pos 2. In the safe lane, the player with more **last hits at 10 minutes** is pos 1 and the other is pos 5. In the off lane, more last hits is pos 3, the other is pos 4.
+- **Otherwise** (or with trilanes or junglers), we sort the team by total last hits: most is pos 1, fewest is pos 5.
 
-The fallback gets it wrong sometimes. A mid who fed hard can show up as "pos 3". The weights for pos 1, 2 and 3 are close, so this rarely changes the verdict. The *Why?* screen tells you which method was used.
+Last hits, not net worth: kill gold inflates net worth, so a support who gets lots of kills (a 15/2/18 Invoker) can end up richer than the core in their lane. Last hits only count creeps, which is what cores take and supports leave.
+
+The fallback can still swap pos 1 and pos 2, since a mid and a carry both farm a lot. The weights for pos 1 and 2 are close, so this rarely changes the verdict. The *Why?* screen tells you which method was used.
 
 ## 2. Score each component (0–100)
 
@@ -88,4 +90,4 @@ A bad KDA alone isn't enough. A support who went 3/9/9 with a normal kill partic
 - OpenDota benchmarks cover all skill brackets, not your rank. A Herald and an Immortal are compared against the same curve.
 - Saves (Glimmer, Force on an ally) aren't counted. OpenDota doesn't expose them in a usable form. Healing partly covers this.
 - Turbo games are scored like normal games. Benchmarks don't separate them, so Turbo GPM looks inflated.
-- Position guessing without a parsed replay is a heuristic (see step 1).
+- Position guessing without a parsed replay is a heuristic (see step 1). Tap 🔄 once the replay is parsed to get real lanes.

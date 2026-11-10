@@ -47,7 +47,12 @@ class OpenDotaError(Exception):
 def slim_match(m: dict) -> dict:
     """Parsed matches are ~1 MB of logs we don't need. Keep the bits we use."""
     out = {k: m.get(k) for k in MATCH_KEYS}
-    out["players"] = [{k: p.get(k) for k in PLAYER_KEYS if k in p} for p in m.get("players") or []]
+    out["players"] = []
+    for p in m.get("players") or []:
+        slim = {k: p.get(k) for k in PLAYER_KEYS if k in p}
+        if p.get("lh_t"):
+            slim["lh_t"] = p["lh_t"][:11]  # last hits per minute; only the first 10 min matter
+        out["players"].append(slim)
     return out
 
 
@@ -96,7 +101,7 @@ class OpenDota:
     # -- matches -------------------------------------------------------------
 
     async def match(self, match_id: int, force: bool = False) -> dict | None:
-        key = f"match:{match_id}"
+        key = f"match2:{match_id}"
         if not force:
             cached = await self.db.cache_get(key, UNPARSED_TTL)
             if cached is not None:

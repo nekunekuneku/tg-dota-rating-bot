@@ -219,23 +219,35 @@ def _net_worth(player: dict, minutes: float) -> float:
 # ---------------------------------------------------------------------------
 
 
+def _core_signal(p: dict, minutes: float) -> tuple[float, float]:
+    """How much this player farmed creeps - the best tell for core vs support.
+
+    Last hits at 10 min (parsed replays) beat total last hits, and both beat
+    net worth: kill gold inflates net worth, so a support who gets lots of
+    kills looks "richer" than the core in their lane. Net worth only breaks ties.
+    """
+    lh_t = p.get("lh_t") or []
+    lh = lh_t[10] if len(lh_t) > 10 else (p.get("last_hits") or 0)
+    return (float(lh), _net_worth(p, minutes))
+
+
 def infer_positions(team: list[dict], minutes: float) -> dict[int, tuple[int, str]]:
     """Return {player_slot: (position, source)} for one team.
 
-    With a parsed replay we know lanes: mid -> 2, richer safelaner -> 1,
-    poorer safelaner -> 5, richer offlaner -> 3, poorer offlaner -> 4.
-    If lanes are missing or weird (trilanes, jungle), fall back to ordering
-    by net worth: richest = pos 1, poorest = pos 5. That's wrong sometimes
-    (a rich mid becomes "pos 1") but the pos 1/2/3 weights are close enough
-    that it rarely changes the verdict.
+    With a parsed replay we know lanes: mid -> 2; in the safe lane the player
+    with more last hits is pos 1, the other pos 5; in the off lane, more last
+    hits is pos 3, the other pos 4.
+    If lanes are missing or weird (trilanes, jungle), order the team by last
+    hits: most = pos 1, fewest = pos 5. That can swap pos 1 and 2, but those
+    weights are close enough that it rarely changes the verdict.
     """
-    by_nw = sorted(team, key=lambda p: _net_worth(p, minutes), reverse=True)
+    by_farm = sorted(team, key=lambda p: _core_signal(p, minutes), reverse=True)
     lanes = [p.get("lane_role") for p in team]
 
     if len(team) == 5 and all(lane in (1, 2, 3) for lane in lanes):
-        mid = [p for p in by_nw if p["lane_role"] == 2]
-        safe = [p for p in by_nw if p["lane_role"] == 1]
-        off = [p for p in by_nw if p["lane_role"] == 3]
+        mid = [p for p in by_farm if p["lane_role"] == 2]
+        safe = [p for p in by_farm if p["lane_role"] == 1]
+        off = [p for p in by_farm if p["lane_role"] == 3]
         if len(mid) == 1 and len(safe) == 2 and len(off) == 2:
             return {
                 mid[0]["player_slot"]: (2, "lanes"),
@@ -245,7 +257,7 @@ def infer_positions(team: list[dict], minutes: float) -> dict[int, tuple[int, st
                 off[1]["player_slot"]: (4, "lanes"),
             }
 
-    return {p["player_slot"]: (min(i + 1, 5), "net worth") for i, p in enumerate(by_nw)}
+    return {p["player_slot"]: (min(i + 1, 5), "last hits") for i, p in enumerate(by_farm)}
 
 
 # ---------------------------------------------------------------------------

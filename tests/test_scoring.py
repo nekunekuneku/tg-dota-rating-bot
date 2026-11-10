@@ -16,11 +16,41 @@ def test_around_norm_is_centered():
     assert around_norm(3, 1.0, 0.5, higher_is_better=False) < 5
 
 
-def test_positions_by_net_worth(match):
-    radiant = [p for p in match["players"] if p["player_slot"] < 128]
+def test_positions_tie_on_last_hits_falls_back_to_net_worth(match):
+    radiant = [p for p in match["players"] if p["player_slot"] < 128]  # all 200 LH in the fixture
     pos = infer_positions(radiant, 40)
-    assert pos[1] == (1, "net worth")  # richest
-    assert pos[4] == (5, "net worth")  # poorest
+    assert pos[1] == (1, "last hits")  # richest
+    assert pos[4] == (5, "last hits")  # poorest
+
+
+# Radiant of match 9072914350: GS Smurf's Invoker was richer from kills,
+# but QG's Spirit Breaker took more creeps and was the real pos 3.
+REAL_TEAM = [
+    {"player_slot": 0, "net_worth": 20109, "last_hits": 294, "lane_role": 2},  # Nick, mid
+    {"player_slot": 1, "net_worth": 13054, "last_hits": 49, "lane_role": 3},  # GS Smurf
+    {"player_slot": 2, "net_worth": 12330, "last_hits": 78, "lane_role": 3},  # QG
+    {"player_slot": 3, "net_worth": 21306, "last_hits": 290, "lane_role": 1},
+    {"player_slot": 4, "net_worth": 10092, "last_hits": 19, "lane_role": 1},
+]
+
+
+def test_offlane_core_is_who_farmed_not_who_got_kills():
+    pos = {s: p for s, (p, _) in infer_positions(REAL_TEAM, 33).items()}
+    assert pos[2] == 3 and pos[1] == 4
+
+
+def test_offlane_core_without_replay():
+    team = [{k: v for k, v in p.items() if k != "lane_role"} for p in REAL_TEAM]
+    pos = {s: p for s, (p, _) in infer_positions(team, 33).items()}
+    assert pos[2] == 3 and pos[1] == 4
+
+
+def test_last_hits_at_10_min_win_over_totals():
+    team = [dict(p) for p in REAL_TEAM]
+    team[1]["lh_t"] = [0] * 10 + [40]  # GS out-farmed QG in lane...
+    team[2]["lh_t"] = [0] * 10 + [15]  # ...even though QG ended with more
+    pos = {s: p for s, (p, _) in infer_positions(team, 33).items()}
+    assert pos[1] == 3 and pos[2] == 4
 
 
 def test_positions_by_lane():

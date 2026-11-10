@@ -184,7 +184,7 @@ def why(m: MatchRating, r: PlayerRating, heroes: dict[int, str], friends: dict[i
         names = ", ".join(COMPONENT_LABELS[k] for k in r.skipped)
         lines.append(f"\n<i>Not counted (no data yet): {names}. Weights rescaled.</i>")
 
-    pos_note = "from lanes in the replay" if r.position_source == "lanes" else "guessed from net worth"
+    pos_note = "from lanes in the replay" if r.position_source == "lanes" else "guessed from last hits (no replay yet)"
     lines.append(f"<i>Position {pos_note}.</i>")
 
     if r.verdict == "Threw?":
