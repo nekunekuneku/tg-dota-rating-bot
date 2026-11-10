@@ -17,7 +17,7 @@ from aiogram.types import BotCommand
 from .db import DB
 from .handlers import router
 from .opendota import OpenDota
-from .service import Service
+from .service import Service, load_roster
 
 
 def load_dotenv(path: str = ".env") -> None:
@@ -53,13 +53,13 @@ class EnvProxySession(AiohttpSession):
 
 
 COMMANDS = [
-    BotCommand(command="last", description="Rate your last match"),
+    BotCommand(command="last", description="Someone's last game"),
+    BotCommand(command="ourlast", description="The squad's last game together"),
+    BotCommand(command="history", description="Someone's last 5 games"),
+    BotCommand(command="ourhistory", description="The squad's last 5 games together"),
     BotCommand(command="match", description="Rate a match by ID"),
-    BotCommand(command="me", description="Your recent form"),
-    BotCommand(command="week", description="Chat leaderboard, 7 days"),
-    BotCommand(command="month", description="Chat leaderboard, 30 days"),
-    BotCommand(command="link", description="Link your Dota account"),
-    BotCommand(command="join", description="Show up in this group's stats"),
+    BotCommand(command="week", description="Leaderboard, 7 days"),
+    BotCommand(command="month", description="Leaderboard, 30 days"),
     BotCommand(command="scoring", description="How scores work"),
     BotCommand(command="help", description="Help"),
 ]
@@ -76,7 +76,9 @@ async def main() -> None:
     db = DB(os.getenv("DB_PATH", "bot.sqlite3"))
     await db.open()
     od = OpenDota(db, api_key=os.getenv("OPENDOTA_API_KEY") or None)
-    svc = Service(db, od)
+    roster = load_roster(os.getenv("FRIENDS_FILE", "friends.json"))
+    logging.info("friend list: %s", ", ".join(f.name for f in roster))
+    svc = Service(db, od, roster)
 
     session = EnvProxySession() if os.getenv("HTTPS_PROXY") or os.getenv("https_proxy") else None
     bot = Bot(token, session=session, default=DefaultBotProperties(parse_mode=ParseMode.HTML, link_preview_is_disabled=True))

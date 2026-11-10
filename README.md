@@ -3,6 +3,7 @@
 A small Telegram bot for a friend group. Ask it about a match and it tells you who carried and who threw.
 
 - **Only speaks when asked.** No auto-posts, no weekly spam.
+- **No sign-up.** The squad is a fixed list in `friends.json`.
 - **Short cards.** One screen per match. Full tables and breakdowns are behind buttons.
 - **Fast.** Uses OpenDota only and answers right away from the basic match data. The parsed replay adds wards and stuns later (🔄 button).
 - **Transparent scoring.** Tap *Why?* on any player to see each component, its weight and the raw numbers. See [docs/SCORING.md](docs/SCORING.md).
@@ -11,14 +12,28 @@ A small Telegram bot for a friend group. Ask it about a match and it tells you w
 
 | Command | What it does |
 |---|---|
-| `/link <Friend ID or profile URL>` | Link your Dota account. Run it in the group so you show up in group stats |
-| `/join` | Add yourself to this group's stats if you linked in DMs |
-| `/last` | Rate your last match. Reply to someone, or add `@username`, to rate their last match |
+| `/last [name]` | Someone's last game. No name → tap a name button |
+| `/ourlast` | The squad's last game (2+ friends in it) |
+| `/history [name]` | Someone's last 5 games, one line each. Tap a number to open the card |
+| `/ourhistory` | The squad's last 5 games together |
 | `/match <id>` | Rate any match |
-| `/me [N]` | Your last N games (default 10, max 20) |
-| `/week`, `/month` | Leaderboard and awards for everyone linked in this chat |
+| `/week`, `/month` | Leaderboard and awards |
 | `/scoring` | Short explanation of the formula |
-| `/unlink`, `/leave` | Forget your account / leave this chat's stats |
+
+Names match loosely: `/last nick`, `/history smurf`. An exact name wins, so `/last gs` means GS, not GS Smurf.
+
+## Friend list
+
+Edit `friends.json` and restart the bot:
+
+```json
+[
+  {"id": 55775392, "name": "Nick"},
+  {"id": 100648413, "name": "Andrew"}
+]
+```
+
+`id` is the Dota Friend ID. Group commands look through each friend's 20 most recent matches.
 
 Example card:
 
@@ -40,7 +55,7 @@ Ranked All Pick · #8000000001
 ## Setup
 
 1. Create a bot with [@BotFather](https://t.me/BotFather) and copy the token. You can leave privacy mode on, because the bot only reacts to commands.
-2. Everyone turns on **Dota 2 → Settings → Social → Expose Public Match Data**.
+2. Put your squad in `friends.json`, and everyone turns on **Dota 2 → Settings → Social → Expose Public Match Data**.
 3. Run it:
 
 ```bash

@@ -6,6 +6,7 @@ buttons ("All players", "Why?") instead of being dumped up front.
 
 from __future__ import annotations
 
+import time
 from html import escape as _escape
 
 from .scoring import COMPONENT_LABELS, MatchRating, PlayerRating
@@ -239,4 +240,49 @@ def week(rows: list[dict], heroes: dict[int, str], days: int) -> str:
         lines.append(f"🏆 Game of the week: {escape(name)} · {escape(heroes.get(p.hero_id, '?'))} {p.kda} — {round(p.score)}")
         name, m, p = min(every, key=lambda x: x[2].score)
         lines.append(f"🤡 Shame of the week: {escape(name)} · {escape(heroes.get(p.hero_id, '?'))} {p.kda} — {round(p.score)}")
+    return "\n".join(lines)
+
+
+def ago(ts: int, now: float | None = None) -> str:
+    sec = max(0, int((now or time.time()) - ts))
+    if sec < 3600:
+        return f"{max(1, sec // 60)}m ago"
+    if sec < 86400:
+        return f"{sec // 3600}h ago"
+    days = sec // 86400
+    return "yesterday" if days == 1 else f"{days}d ago"
+
+
+def history(name: str, games: list[tuple[MatchRating, PlayerRating]], heroes: dict[int, str]) -> str:
+    """One line per game. Numbered so the buttons below can open each one."""
+    if not games:
+        return f"<b>{escape(name)}</b>\nNo recent matches found. Is Expose Public Match Data on?"
+    n = len(games)
+    wins = sum(1 for _, r in games if r.won)
+    avg = sum(r.score for _, r in games) / n
+    lines = [f"📜 <b>{escape(name)}</b> · last {n} games · {wins}–{n - wins} · avg {round(avg)}", ""]
+    for i, (m, r) in enumerate(games, 1):
+        hero = escape(heroes.get(r.hero_id, f"Hero #{r.hero_id}"))
+        lines.append(
+            f"{i}. {'✅' if r.won else '❌'} {hero} {r.kda} · <b>{round(r.score)}</b> {verdict_tag(r)} · {ago(m.start_time)}"
+        )
+    return "\n".join(lines)
+
+
+def our_history(items: list, heroes: dict[int, str], friends: dict[int, str], title: str) -> str:
+    """items: [(GroupMatch, MatchRating | None)]. One block per match."""
+    if not items:
+        return "No games with 2+ of you together in everyone's last 20 matches."
+    lines = [f"👥 <b>{title}</b>", ""]
+    for i, (g, m) in enumerate(items, 1):
+        if m is None:
+            names = ", ".join(escape(f.name) for f in g.friends)
+            lines.append(f"{i}. ⏳ {names} · {ago(g.start_time)} · not on OpenDota yet")
+            continue
+        ours = [r for r in m.players if r.account_id in friends]
+        sides = {r.won for r in ours}
+        result = "⚔️" if len(sides) > 1 else ("✅" if ours and ours[0].won else "❌")
+        lines.append(f"{i}. {result} {duration(m.duration)} · {ago(m.start_time)}")
+        parts = [f"{escape(friends[r.account_id])} {round(r.score)}{VERDICT_EMOJI.get(r.verdict, '')}" for r in sorted(ours, key=lambda r: -r.score)]
+        lines.append("    " + " · ".join(parts))
     return "\n".join(lines)

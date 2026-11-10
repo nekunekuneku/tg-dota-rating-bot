@@ -5,7 +5,7 @@ import httpx
 
 from bot.db import DB
 from bot.opendota import BASE, OpenDota
-from bot.service import Service
+from bot.service import Friend, Service, find_friend
 from tests.conftest import BASE_MATCH
 
 
@@ -39,10 +39,6 @@ def test_last_match_flow_and_cache(tmp_path):
 
     async def go():
         db, od, svc = await make_service(tmp_path, handler)
-        await db.link(42, 1000, "Danil", "danil")
-        await db.add_member(-100, 42)
-        assert await svc.friends_map(-100) == {1000: "Danil"}
-
         mid = await svc.last_match_id(1000)
         assert mid == 8000000001
         m = await svc.rate(mid)
@@ -53,10 +49,6 @@ def test_last_match_flow_and_cache(tmp_path):
 
         await svc.rate(mid)  # second call served from cache
         assert calls.count("/api/matches/8000000001") == 1
-
-        assert (await db.get_user_by_username("@Danil")).tg_id == 42
-        assert await db.unlink(42)
-        assert await svc.friends_map(-100) == {}
         await od.close()
         await db.close()
 
@@ -95,6 +87,42 @@ def test_stub_match_is_not_rated_or_cached(tmp_path):
         db, od, svc = await make_service(tmp_path, lambda req: httpx.Response(200, json=stub))
         assert await svc.rate(5) is None
         assert await db.cache_get("match:5", None) is None
+        await od.close()
+        await db.close()
+
+    run(go())
+
+
+ROSTER = [Friend(55775392, "Nick"), Friend(129229916, "GS Smurf"), Friend(103826341, "GS"), Friend(72621204, "QG")]
+
+
+def test_find_friend():
+    assert find_friend(ROSTER, "nick").name == "Nick"
+    assert find_friend(ROSTER, "GS").name == "GS"  # exact beats prefix
+    assert find_friend(ROSTER, "smurf").name == "GS Smurf"
+    assert find_friend(ROSTER, "g") == [ROSTER[1], ROSTER[2]]  # ambiguous
+    assert find_friend(ROSTER, "72621204").name == "QG"
+    assert find_friend(ROSTER, "zzz") is None
+
+
+def test_group_matches_needs_two_friends(tmp_path):
+    recent = {
+        55775392: [{"match_id": 3, "start_time": 300}, {"match_id": 2, "start_time": 200}, {"match_id": 1, "start_time": 100}],
+        129229916: [{"match_id": 2, "start_time": 200}],
+        103826341: [{"match_id": 1, "start_time": 100}, {"match_id": 9, "start_time": 900}],
+        72621204: [{"match_id": 1, "start_time": 100}],
+    }
+
+    def handler(req):
+        acc = int(req.url.path.split("/")[3])
+        return httpx.Response(200, json=recent[acc])
+
+    async def go():
+        db, od, svc = await make_service(tmp_path, handler)
+        svc.roster = ROSTER
+        groups = await svc.group_matches(5)
+        assert [g.match_id for g in groups] == [2, 1]  # 3 and 9 were solo games
+        assert {f.name for f in groups[1].friends} == {"Nick", "GS", "QG"}
         await od.close()
         await db.close()
 

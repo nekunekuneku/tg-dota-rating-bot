@@ -6,71 +6,54 @@ import asyncio
 import logging
 
 from aiogram import F, Router
-from aiogram.enums import ChatAction, ChatType
+from aiogram.enums import ChatAction
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from . import render
-from .db import User
 from .opendota import OpenDotaError
 from .scoring import MatchRating
-from .service import Service, parse_account_id, parse_match_id
+from .service import Friend, Service, find_friend, parse_match_id
 
 log = logging.getLogger(__name__)
 router = Router()
 
+HISTORY_N = 5
+
 HELP = (
-    "<b>Who threw?</b> Match verdicts for your friend group. I only post when you ask.\n\n"
-    "/link <code>&lt;Friend ID or profile link&gt;</code> – link your Dota account\n"
-    "/last – rate your last match (reply to someone or add @name for theirs)\n"
+    "<b>Who threw?</b> Match verdicts for the squad. I only post when you ask.\n\n"
+    "/last <code>[name]</code> – someone's last game\n"
+    "/ourlast – the squad's last game (2+ of you)\n"
+    "/history <code>[name]</code> – someone's last 5 games\n"
+    "/ourhistory – the squad's last 5 games together\n"
     "/match <code>&lt;id&gt;</code> – rate any match\n"
-    "/me – your last 10 games (/me 20 for more)\n"
-    "/week, /month – chat leaderboard\n"
-    "/scoring – how the score is calculated\n"
-    "/unlink – forget your account\n\n"
-    "In a group, run /link (or /join if you linked in DMs) so you show up in the group's stats.\n"
-    "Your match data must be public: Dota 2 → Settings → Social → Expose Public Match Data."
+    "/week, /month – leaderboard\n"
+    "/scoring – how the score is calculated\n\n"
+    "Leave the name out and I'll show buttons to pick who."
 )
-
-
-def tg_name(msg_user) -> str:
-    return msg_user.first_name or msg_user.username or str(msg_user.id)
-
-
-def is_group(message: Message) -> bool:
-    return message.chat.type in (ChatType.GROUP, ChatType.SUPERGROUP)
-
-
-async def remember(message: Message, svc: Service) -> User | None:
-    """Return the sender's linked account and register them in this group."""
-    u = await svc.db.get_user(message.from_user.id)
-    if u:
-        await svc.db.touch_user(u.tg_id, tg_name(message.from_user), message.from_user.username)
-        if is_group(message):
-            await svc.db.add_member(message.chat.id, u.tg_id)
-    return u
 
 
 # -- keyboards ---------------------------------------------------------------
 
 
+def btn(text: str, data: str) -> InlineKeyboardButton:
+    return InlineKeyboardButton(text=text, callback_data=data)
+
+
 def kb_summary(m: MatchRating, heroes: dict[int, str], friends: dict[int, str]) -> InlineKeyboardMarkup:
-    rows = [[InlineKeyboardButton(text="👥 All players", callback_data=f"m:{m.match_id}:a")]]
-    targets = [r for r in m.players if r.account_id and r.account_id in friends][:4]
+    rows = [[btn("👥 All players", f"m:{m.match_id}:a")]]
+    targets = sorted((r for r in m.players if r.account_id in friends), key=lambda r: -r.score)[:6]
     if not targets:
         targets = [r for r in (m.mvp, *m.threw[:1]) if r]
     why = [
-        InlineKeyboardButton(
-            text=f"🔍 {render.short(friends.get(r.account_id) or heroes.get(r.hero_id, '?'), 14)}",
-            callback_data=f"m:{m.match_id}:w{r.slot}",
-        )
+        btn(f"🔍 {render.short(friends.get(r.account_id) or heroes.get(r.hero_id, '?'), 14)}", f"m:{m.match_id}:w{r.slot}")
         for r in targets
     ]
-    for i in range(0, len(why), 2):
-        rows.append(why[i : i + 2])
+    for i in range(0, len(why), 3):
+        rows.append(why[i : i + 3])
     if not m.parsed:
-        rows.append([InlineKeyboardButton(text="🔄 Refresh (replay parsed?)", callback_data=f"m:{m.match_id}:r")])
+        rows.append([btn("🔄 Refresh (replay parsed?)", f"m:{m.match_id}:r")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -78,48 +61,93 @@ def kb_all(m: MatchRating, heroes: dict[int, str]) -> InlineKeyboardMarkup:
     rows = []
     for radiant in (True, False):
         team = sorted((r for r in m.players if r.is_radiant == radiant), key=lambda r: r.position)
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=render.short(heroes.get(r.hero_id, "?"), 8), callback_data=f"m:{m.match_id}:w{r.slot}"
-                )
-                for r in team
-            ]
-        )
-    rows.append([InlineKeyboardButton(text="⬅️ Back", callback_data=f"m:{m.match_id}:s")])
+        rows.append([btn(render.short(heroes.get(r.hero_id, "?"), 8), f"m:{m.match_id}:w{r.slot}") for r in team])
+    rows.append([btn("⬅️ Back", f"m:{m.match_id}:s")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def kb_back(m: MatchRating, to: str = "s") -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="⬅️ Back", callback_data=f"m:{m.match_id}:{to}")]]
-    )
+def kb_back(m: MatchRating) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[btn("⬅️ Back", f"m:{m.match_id}:s")]])
 
 
-async def send_match(message: Message, svc: Service, match_id: int) -> None:
-    await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+def kb_pick(roster: list[Friend], action: str) -> InlineKeyboardMarkup:
+    """Name buttons. action: 'l' = last game, 'h' = history."""
+    buttons = [btn(f.name, f"p:{action}:{i}") for i, f in enumerate(roster)]
+    return InlineKeyboardMarkup(inline_keyboard=[buttons[i : i + 3] for i in range(0, len(buttons), 3)])
+
+
+def kb_open(match_ids: list[int]) -> InlineKeyboardMarkup:
+    """Numbered buttons that open each game's card."""
+    buttons = [btn(str(i), f"o:{mid}") for i, mid in enumerate(match_ids, 1)]
+    return InlineKeyboardMarkup(inline_keyboard=[buttons])
+
+
+# -- shared bits -------------------------------------------------------------
+
+
+async def match_card(svc: Service, match_id: int) -> tuple[str, InlineKeyboardMarkup | None]:
     m = await svc.rate(match_id)
     if not m:
         asyncio.create_task(svc.od.request_parse(match_id))  # nudges OpenDota to fetch it
-        await message.reply(
+        return (
             "OpenDota doesn't have this match yet. New games usually show up a few minutes "
-            "after they end. Try again soon, or check the match ID."
+            "after they end. Try again soon, or check the match ID.",
+            None,
         )
-        return
     if not m.parsed:
         asyncio.create_task(svc.od.request_parse(match_id))  # so Refresh has something to find later
     heroes = await svc.od.heroes()
-    friends = await friends_for(message, svc)
-    await message.reply(render.summary(m, heroes, friends), reply_markup=kb_summary(m, heroes, friends))
+    friends = svc.friends_map()
+    return render.summary(m, heroes, friends), kb_summary(m, heroes, friends)
 
 
-async def friends_for(message: Message, svc: Service) -> dict[int, str]:
-    friends = await svc.friends_map(message.chat.id)
-    if not is_group(message):  # in DMs, highlight yourself
-        u = await svc.db.get_user(message.chat.id)
-        if u:
-            friends[u.account_id] = u.display_name
-    return friends
+async def last_card(svc: Service, f: Friend) -> tuple[str, InlineKeyboardMarkup | None]:
+    match_id = await svc.last_match_id(f.account_id)
+    if not match_id:
+        return f"No recent matches for {render.escape(f.name)}. Is Expose Public Match Data on?", None
+    return await match_card(svc, match_id)
+
+
+async def history_card(svc: Service, f: Friend) -> tuple[str, InlineKeyboardMarkup | None]:
+    games = await svc.player_games(f.account_id, HISTORY_N, force=True)
+    heroes = await svc.od.heroes()
+    kb = kb_open([m.match_id for m, _ in games]) if games else None
+    return render.history(f.name, games, heroes), kb
+
+
+def resolve(svc: Service, args: str | None) -> Friend | str | None:
+    """Friend, an error message, or None if no name was given."""
+    if not args or not args.strip():
+        return None
+    hit = find_friend(svc.roster, args)
+    if isinstance(hit, Friend):
+        return hit
+    if isinstance(hit, list):
+        return "Did you mean " + " or ".join(render.escape(f.name) for f in hit) + "?"
+    return f"No one called “{render.escape(args.strip())}” on the list."
+
+
+async def typing(message: Message) -> None:
+    try:
+        await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+    except TelegramBadRequest:
+        pass
+
+
+async def for_friend(message: Message, command: CommandObject, svc: Service, action: str, builder) -> None:
+    target = resolve(svc, command.args)
+    if target is None:
+        await message.reply("Whose?", reply_markup=kb_pick(svc.roster, action))
+        return
+    if isinstance(target, str):
+        await message.reply(target, reply_markup=kb_pick(svc.roster, action))
+        return
+    await typing(message)
+    try:
+        text, kb = await builder(svc, target)
+    except OpenDotaError as e:
+        text, kb = str(e), None
+    await message.reply(text, reply_markup=kb)
 
 
 # -- commands ----------------------------------------------------------------
@@ -127,8 +155,7 @@ async def friends_for(message: Message, svc: Service) -> dict[int, str]:
 
 @router.message(CommandStart())
 @router.message(Command("help"))
-async def cmd_help(message: Message, svc: Service) -> None:
-    await remember(message, svc)
+async def cmd_help(message: Message) -> None:
     await message.reply(HELP)
 
 
@@ -137,129 +164,61 @@ async def cmd_scoring(message: Message) -> None:
     await message.reply(render.scoring_help())
 
 
-@router.message(Command("link"))
-async def cmd_link(message: Message, command: CommandObject, svc: Service) -> None:
-    account_id = parse_account_id(command.args or "")
-    if not account_id:
-        await message.reply(
-            "Send your Dota Friend ID, e.g. <code>/link 123456789</code>\n"
-            "Also works with a Dotabuff/OpenDota/STRATZ link or steamcommunity.com/profiles/… link."
-        )
-        return
-    try:
-        prof = await svc.od.profile(account_id)
-    except OpenDotaError as e:
-        await message.reply(str(e))
-        return
-    await svc.db.link(message.from_user.id, account_id, tg_name(message.from_user), message.from_user.username)
-    if is_group(message):
-        await svc.db.add_member(message.chat.id, message.from_user.id)
-    if prof:
-        p = prof["profile"]
-        await message.reply(f"Linked to <b>{render.escape(p.get('personaname') or str(account_id))}</b> ✅")
-    else:
-        await message.reply(
-            f"Linked to <code>{account_id}</code>, but OpenDota has no public profile for it yet. "
-            "Make sure Expose Public Match Data is on, play a game, and try /last."
-        )
-
-
-@router.message(Command("unlink"))
-async def cmd_unlink(message: Message, svc: Service) -> None:
-    ok = await svc.db.unlink(message.from_user.id)
-    await message.reply("Unlinked 👋" if ok else "You weren't linked.")
-
-
-@router.message(Command("join"))
-async def cmd_join(message: Message, svc: Service) -> None:
-    if not is_group(message):
-        await message.reply("Run /join in your group chat.")
-        return
-    u = await remember(message, svc)
-    await message.reply("You're in this chat's stats ✅" if u else "Link first: /link <Friend ID>")
-
-
-@router.message(Command("leave"))
-async def cmd_leave(message: Message, svc: Service) -> None:
-    if is_group(message):
-        await svc.db.remove_member(message.chat.id, message.from_user.id)
-        await message.reply("Removed you from this chat's stats.")
-
-
-async def resolve_target(message: Message, command: CommandObject, svc: Service) -> User | None:
-    """Reply-to user, @username in args, or the sender."""
-    if message.reply_to_message and message.reply_to_message.from_user and not message.reply_to_message.from_user.is_bot:
-        return await svc.db.get_user(message.reply_to_message.from_user.id)
-    for word in (command.args or "").split():
-        if word.startswith("@"):
-            return await svc.db.get_user_by_username(word)
-    return await svc.db.get_user(message.from_user.id)
-
-
 @router.message(Command("last"))
 async def cmd_last(message: Message, command: CommandObject, svc: Service) -> None:
-    await remember(message, svc)
-    target = await resolve_target(message, command, svc)
-    if not target:
-        await message.reply("Not linked. Use /link <Friend ID> first.")
-        return
+    await for_friend(message, command, svc, "l", last_card)
+
+
+@router.message(Command("history"))
+async def cmd_history(message: Message, command: CommandObject, svc: Service) -> None:
+    await for_friend(message, command, svc, "h", history_card)
+
+
+@router.message(Command("ourlast"))
+async def cmd_ourlast(message: Message, svc: Service) -> None:
+    await typing(message)
     try:
-        await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
-        match_id = await svc.last_match_id(target.account_id)
-        if not match_id:
-            await message.reply("No recent matches found. Is Expose Public Match Data on?")
+        groups = await svc.group_matches(1, force=True)
+        if not groups:
+            await message.reply("No game with 2+ of you together in everyone's last 20 matches.")
             return
-        await send_match(message, svc, match_id)
+        text, kb = await match_card(svc, groups[0].match_id)
     except OpenDotaError as e:
-        await message.reply(str(e))
+        text, kb = str(e), None
+    await message.reply(text, reply_markup=kb)
+
+
+@router.message(Command("ourhistory"))
+async def cmd_ourhistory(message: Message, svc: Service) -> None:
+    await typing(message)
+    try:
+        items = await svc.group_history(HISTORY_N, force=True)
+        heroes = await svc.od.heroes()
+        text = render.our_history(items, heroes, svc.friends_map(), "Last game together" if len(items) == 1 else f"Last {len(items)} games together")
+        kb = kb_open([g.match_id for g, _ in items]) if items else None
+    except OpenDotaError as e:
+        text, kb = str(e), None
+    await message.reply(text, reply_markup=kb)
 
 
 @router.message(Command("match"))
 async def cmd_match(message: Message, command: CommandObject, svc: Service) -> None:
-    await remember(message, svc)
     match_id = parse_match_id(command.args or "")
     if not match_id:
         await message.reply("Usage: <code>/match 8012345678</code>")
         return
+    await typing(message)
     try:
-        await send_match(message, svc, match_id)
+        text, kb = await match_card(svc, match_id)
     except OpenDotaError as e:
-        await message.reply(str(e))
-
-
-@router.message(Command("me"))
-async def cmd_me(message: Message, command: CommandObject, svc: Service) -> None:
-    await remember(message, svc)
-    target = await resolve_target(message, command, svc)
-    if not target:
-        await message.reply("Not linked. Use /link <Friend ID> first.")
-        return
-    limit = 10
-    for word in (command.args or "").split():
-        if word.isdigit():
-            limit = max(1, min(20, int(word)))
-    try:
-        await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
-        games = await svc.player_games(target.account_id, limit)
-        heroes = await svc.od.heroes()
-        await message.reply(render.profile(target.display_name, games, heroes))
-    except OpenDotaError as e:
-        await message.reply(str(e))
+        text, kb = str(e), None
+    await message.reply(text, reply_markup=kb)
 
 
 async def period(message: Message, svc: Service, days: int) -> None:
-    await remember(message, svc)
-    if not is_group(message):
-        u = await svc.db.get_user(message.from_user.id)
-        users = [u] if u else []
-    else:
-        users = await svc.db.chat_users(message.chat.id)
-    if not users:
-        await message.reply("Nobody's linked here yet. /link <Friend ID>")
-        return
-    status = await message.reply(f"⏳ Crunching the last {days} days for {len(users)} players…")
+    status = await message.reply(f"⏳ Crunching the last {days} days for {len(svc.roster)} players…")
     try:
-        rows = await svc.chat_period(users, days)
+        rows = await svc.period(days)
         heroes = await svc.od.heroes()
         await status.edit_text(render.week(rows, heroes, days))
     except OpenDotaError as e:
@@ -277,6 +236,48 @@ async def cmd_month(message: Message, svc: Service) -> None:
 
 
 # -- buttons -----------------------------------------------------------------
+
+
+async def edit(cb: CallbackQuery, text: str, kb: InlineKeyboardMarkup | None) -> None:
+    try:
+        await cb.message.edit_text(text, reply_markup=kb)
+    except TelegramBadRequest as e:
+        if "not modified" not in str(e):
+            raise
+
+
+@router.callback_query(F.data.startswith("p:"))
+async def on_pick(cb: CallbackQuery, svc: Service) -> None:
+    """A name was tapped under 'Whose?'."""
+    try:
+        _, action, idx = cb.data.split(":")
+        friend = svc.roster[int(idx)]
+    except (ValueError, IndexError):
+        await cb.answer()
+        return
+    await cb.answer(f"Loading {friend.name}…")
+    builder = last_card if action == "l" else history_card
+    try:
+        text, kb = await builder(svc, friend)
+    except OpenDotaError as e:
+        text, kb = str(e), None
+    await edit(cb, text, kb)
+
+
+@router.callback_query(F.data.startswith("o:"))
+async def on_open(cb: CallbackQuery, svc: Service) -> None:
+    """Number tapped under a history list: post that game's card as a reply."""
+    try:
+        match_id = int(cb.data.split(":")[1])
+    except (ValueError, IndexError):
+        await cb.answer()
+        return
+    await cb.answer()
+    try:
+        text, kb = await match_card(svc, match_id)
+    except OpenDotaError as e:
+        text, kb = str(e), None
+    await cb.message.reply(text, reply_markup=kb)
 
 
 @router.callback_query(F.data.startswith("m:"))
@@ -306,12 +307,7 @@ async def on_match_button(cb: CallbackQuery, svc: Service) -> None:
         return
 
     heroes = await svc.od.heroes()
-    friends = await svc.friends_map(cb.message.chat.id)
-    if cb.message.chat.type == ChatType.PRIVATE:
-        u = await svc.db.get_user(cb.from_user.id)
-        if u:
-            friends[u.account_id] = u.display_name
-
+    friends = svc.friends_map()
     if view == "a":
         text, kb = render.all_players(m, heroes, friends), kb_all(m, heroes)
     elif view.startswith("w"):
@@ -323,9 +319,5 @@ async def on_match_button(cb: CallbackQuery, svc: Service) -> None:
     else:
         text, kb = render.summary(m, heroes, friends), kb_summary(m, heroes, friends)
 
-    try:
-        await cb.message.edit_text(text, reply_markup=kb)
-    except TelegramBadRequest as e:
-        if "not modified" not in str(e):
-            raise
+    await edit(cb, text, kb)
     await cb.answer(note or None, show_alert=bool(note))

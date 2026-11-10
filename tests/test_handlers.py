@@ -14,11 +14,13 @@ from aiogram.types import CallbackQuery, Chat, Message, Update, User
 from bot.db import DB
 from bot.handlers import router
 from bot.opendota import BASE, OpenDota
-from bot.service import Service
+from bot.service import Friend, Service
 from tests.conftest import BASE_MATCH
 
 GROUP = Chat(id=-100, type="supergroup", title="squad")
-DANIL = User(id=42, is_bot=False, first_name="Danil", username="danil")
+NICK = User(id=42, is_bot=False, first_name="Nick")
+ROSTER = [Friend(1000, "Danil"), Friend(1129, "Ruslan"), Friend(5, "Solo")]
+MID = 8000000001
 
 
 class FakeSession(BaseSession):
@@ -46,25 +48,18 @@ class FakeSession(BaseSession):
 
 def od_handler(req: httpx.Request):
     p = req.url.path
+    if p == "/api/players/5/recentMatches":
+        return httpx.Response(200, json=[{"match_id": 7, "start_time": 9}])
     if p.endswith("/recentMatches"):
-        return httpx.Response(200, json=[{"match_id": 8000000001, "start_time": 2}])
-    if p.endswith("/matches/8000000001"):
+        return httpx.Response(200, json=[{"match_id": MID, "start_time": 2}])
+    if p.endswith(f"/matches/{MID}"):
         return httpx.Response(200, json=copy.deepcopy(BASE_MATCH))
-    if p == "/api/players/1000":
-        return httpx.Response(200, json={"profile": {"personaname": "EGOIST"}})
     if p == "/api/heroes":
         return httpx.Response(200, json=[{"id": 11, "localized_name": "Shadow Fiend"}])
     return httpx.Response(200, json={})
 
 
-def msg(text, mid=1):
-    return Update(
-        update_id=mid,
-        message=Message(message_id=mid, date=dt.datetime.now(), chat=GROUP, from_user=DANIL, text=text),
-    )
-
-
-def test_link_last_and_buttons(tmp_path):
+def test_commands_and_buttons(tmp_path):
     async def go():
         db = DB(str(tmp_path / "h.sqlite3"))
         await db.open()
@@ -72,32 +67,55 @@ def test_link_last_and_buttons(tmp_path):
         od.client = httpx.AsyncClient(base_url=BASE, transport=httpx.MockTransport(od_handler))
         session = FakeSession()
         bot = Bot("42:TEST", session=session, default=DefaultBotProperties(parse_mode="HTML"))
-        dp = Dispatcher(svc=Service(db, od))
+        dp = Dispatcher(svc=Service(db, od, ROSTER))
         dp.include_router(router)
+        try:
+            await scenario(dp, bot, session)
+        finally:
+            await od.close()
+            await db.close()
 
-        await dp.feed_update(bot, msg("/link 1000"))
-        replies = [m.text for m in session.sent if isinstance(m, SendMessage)]
-        assert "EGOIST" in replies[-1]
+    async def scenario(dp, bot, session):
+        uid = iter(range(1, 1000))
 
-        await dp.feed_update(bot, msg("/last", 2))
-        card = [m for m in session.sent if isinstance(m, SendMessage)][-1]
-        assert "Danil" in card.text and "Threw?" in card.text
-        buttons = [b for row in card.reply_markup.inline_keyboard for b in row]
-        data = {b.callback_data for b in buttons}
-        assert "m:8000000001:a" in data and "m:8000000001:w0" in data
+        async def say(text):
+            m = Message(message_id=next(uid), date=dt.datetime.now(), chat=GROUP, from_user=NICK, text=text)
+            await dp.feed_update(bot, Update(update_id=next(uid), message=m))
+            return [x for x in session.sent if isinstance(x, SendMessage)][-1]
 
-        bot_msg = Message(message_id=99, date=dt.datetime.now(), chat=GROUP, text="card")
-        for cb_data, expect in [("m:8000000001:w0", "weight"), ("m:8000000001:a", "<pre>"), ("m:8000000001:r", "MVP")]:
-            cb = CallbackQuery(id="1", from_user=DANIL, chat_instance="x", message=bot_msg, data=cb_data)
-            await dp.feed_update(bot, Update(update_id=10, callback_query=cb))
-            edit = [m for m in session.sent if isinstance(m, EditMessageText)][-1]
-            assert expect in edit.text, cb_data
+        async def tap(data):
+            bot_msg = Message(message_id=99, date=dt.datetime.now(), chat=GROUP, text="card")
+            cb = CallbackQuery(id="1", from_user=NICK, chat_instance="x", message=bot_msg, data=data)
+            await dp.feed_update(bot, Update(update_id=next(uid), callback_query=cb))
+            return session.sent[-2] if isinstance(session.sent[-1], AnswerCallbackQuery) else session.sent[-1]
 
-        await dp.feed_update(bot, msg("/week", 3))
-        edit = [m for m in session.sent if isinstance(m, EditMessageText)][-1]
-        assert "Danil" in edit.text or "Nobody" in edit.text
+        # /last with no name -> name picker; tapping a name -> card
+        r = await say("/last")
+        assert r.text == "Whose?"
+        assert [b.text for b in r.reply_markup.inline_keyboard[0]] == ["Danil", "Ruslan", "Solo"]
+        card = await tap("p:l:0")
+        assert isinstance(card, EditMessageText) and "Threw?" in card.text
 
-        await od.close()
-        await db.close()
+        # /last with a name
+        r = await say("/last danil")
+        assert "Danil</b> (" in r.text and "Ruslan</b> (" in r.text
+        assert any(b.callback_data == f"m:{MID}:w0" for row in r.reply_markup.inline_keyboard for b in row)
+        assert "No one" in (await say("/last bob")).text
+
+        # buttons on the card
+        for data, expect in [(f"m:{MID}:w0", "weight"), (f"m:{MID}:a", "<pre>"), (f"m:{MID}:r", "MVP")]:
+            assert expect in (await tap(data)).text, data
+
+        # history: one line per game + number buttons that open the card
+        r = await say("/history ruslan")
+        assert "Ruslan" in r.text and "1. " in r.text
+        assert r.reply_markup.inline_keyboard[0][0].callback_data == f"o:{MID}"
+        assert "MVP" in (await tap(f"o:{MID}")).text
+
+        # group: match 8000000001 has Danil + Ruslan; Solo's game is ignored
+        r = await say("/ourlast")
+        assert "Danil</b> (" in r.text and "Ruslan</b> (" in r.text
+        r = await say("/ourhistory")
+        assert "Last game together" in r.text and "Danil" in r.text and "Solo" not in r.text
 
     asyncio.run(go())

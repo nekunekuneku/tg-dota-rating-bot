@@ -61,7 +61,7 @@ class OpenDota:
         self.db = db
         self.api_key = api_key
         self.sem = asyncio.Semaphore(concurrency)
-        self.client = httpx.AsyncClient(base_url=BASE, timeout=25.0, headers={"User-Agent": "dota-verdict-bot"})
+        self.client = httpx.AsyncClient(base_url=BASE, timeout=45.0, headers={"User-Agent": "dota-verdict-bot"})
         self._heroes: dict[int, str] = {}
 
     async def close(self) -> None:
