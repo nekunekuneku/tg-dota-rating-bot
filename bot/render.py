@@ -355,6 +355,8 @@ def history(name: str, games: list[tuple[MatchRating, PlayerRating]], heroes: di
     lines = [f"📜 <b>{escape(name)}</b> · last {n} games · {wins}–{n - wins} · avg {round(avg)}", ""]
     for i, (m, r) in enumerate(games, 1):
         hero = escape(heroes.get(r.hero_id, f"Hero #{r.hero_id}"))
+        if m.game_mode == ABILITY_DRAFT:
+            hero += " (AD)"
         lines.append(
             f"{i}. {'✅' if r.won else '❌'} {hero} {r.kda} · <b>{round(r.score)}</b> {verdict_tag(r)} · {ago(m.start_time)}"
         )
@@ -374,7 +376,8 @@ def our_history(items: list, heroes: dict[int, str], friends: dict[int, str], ti
         ours = [r for r in m.players if r.account_id in friends]
         sides = {r.won for r in ours}
         result = "⚔️" if len(sides) > 1 else ("✅" if ours and ours[0].won else "❌")
-        lines.append(f"{i}. {result} {duration(m.duration)} · {ago(m.start_time)}")
+        ad = " · AD" if m.game_mode == ABILITY_DRAFT else ""
+        lines.append(f"{i}. {result} {duration(m.duration)} · {ago(m.start_time)}{ad}")
         parts = [f"{escape(friends[r.account_id])} {round(r.score)}{VERDICT_EMOJI.get(r.verdict, '')}" for r in sorted(ours, key=lambda r: -r.score)]
         lines.append("    " + " · ".join(parts))
     return "\n".join(lines)

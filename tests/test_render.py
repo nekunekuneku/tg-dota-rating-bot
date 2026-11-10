@@ -119,3 +119,14 @@ def test_ability_draft_lists_drafted_skills(match):
 
     match["game_mode"] = 22  # not AD: no skills line even if names are passed
     assert "🎲" not in render.summary(rate_match(match), HEROES, friends, names)
+
+
+def test_lists_mark_ability_draft(match):
+    match["game_mode"] = 18
+    ad = rate_match(match)
+    match["game_mode"] = 22
+    ap = rate_match(match)
+    text = visible(render.history("Danil", [(ad, ad.player_by_slot(0)), (ap, ap.player_by_slot(0))], HEROES))
+    print("\n" + text)
+    lines = [l for l in text.splitlines() if l[:2] in ("1.", "2.")]
+    assert "Shadow Fiend (AD)" in lines[0] and "(AD)" not in lines[1]
