@@ -93,7 +93,8 @@ def test_commands_and_buttons(tmp_path):
         r = await say("/last")
         assert r.text == "Whose?"
         assert [b.text for b in r.reply_markup.inline_keyboard[0]] == ["Danil", "Ruslan", "Solo"]
-        card = await tap("p:l:0")
+        assert r.reply_markup.inline_keyboard[0][0].callback_data == "p:0:1"
+        card = await tap("p:0:1")
         assert isinstance(card, EditMessageText) and "Threw?" in card.text
 
         # /last with a name
@@ -106,16 +107,21 @@ def test_commands_and_buttons(tmp_path):
         for data, expect in [(f"m:{MID}:w0", "weight"), (f"m:{MID}:a", "<pre>"), (f"m:{MID}:r", "MVP")]:
             assert expect in (await tap(data)).text, data
 
-        # history: one line per game + number buttons that open the card
-        r = await say("/history ruslan")
+        # /last N: one line per game + number buttons that open the card
+        r = await say("/last ruslan 5")
         assert "Ruslan" in r.text and "1. " in r.text
         assert r.reply_markup.inline_keyboard[0][0].callback_data == f"o:{MID}"
         assert "MVP" in (await tap(f"o:{MID}")).text
 
+        # picker remembers the count: "/last 3" -> tap a name -> list, not a card
+        r = await say("/last 3")
+        assert r.reply_markup.inline_keyboard[0][1].callback_data == "p:1:3"
+        assert "📜" in (await tap("p:1:3")).text
+
         # group: match 8000000001 has Danil + Ruslan; Solo's game is ignored
         r = await say("/ourlast")
         assert "Danil</b> (" in r.text and "Ruslan</b> (" in r.text
-        r = await say("/ourhistory")
+        r = await say("/ourlast 5")
         assert "Last game together" in r.text and "Danil" in r.text and "Solo" not in r.text
 
     asyncio.run(go())

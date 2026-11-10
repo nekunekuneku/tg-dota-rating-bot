@@ -19,17 +19,16 @@ from .service import Friend, Service, find_friend, parse_match_id
 log = logging.getLogger(__name__)
 router = Router()
 
-HISTORY_N = 5
+MAX_N = 20  # OpenDota's recentMatches returns 20 per player
 
 HELP = (
     "<b>Who threw?</b> Match verdicts for the squad. I only post when you ask.\n\n"
-    "/last <code>[name]</code> – someone's last game\n"
-    "/ourlast – the squad's last game (2+ of you)\n"
-    "/history <code>[name]</code> – someone's last 5 games\n"
-    "/ourhistory – the squad's last 5 games together\n"
+    "/last <code>[name] [N]</code> – someone's last game, or last N games\n"
+    "/ourlast <code>[N]</code> – the squad's last game (2+ of you), or last N\n"
     "/match <code>&lt;id&gt;</code> – rate any match\n"
     "/week, /month – leaderboard\n"
     "/scoring – how the score is calculated\n\n"
+    "Examples: <code>/last nick</code>, <code>/last nick 5</code>, <code>/ourlast 5</code>. "
     "Leave the name out and I'll show buttons to pick who."
 )
 
@@ -70,16 +69,16 @@ def kb_back(m: MatchRating) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[btn("⬅️ Back", f"m:{m.match_id}:s")]])
 
 
-def kb_pick(roster: list[Friend], action: str) -> InlineKeyboardMarkup:
-    """Name buttons. action: 'l' = last game, 'h' = history."""
-    buttons = [btn(f.name, f"p:{action}:{i}") for i, f in enumerate(roster)]
+def kb_pick(roster: list[Friend], n: int) -> InlineKeyboardMarkup:
+    """Name buttons for /last without a name; n = how many games."""
+    buttons = [btn(f.name, f"p:{i}:{n}") for i, f in enumerate(roster)]
     return InlineKeyboardMarkup(inline_keyboard=[buttons[i : i + 3] for i in range(0, len(buttons), 3)])
 
 
 def kb_open(match_ids: list[int]) -> InlineKeyboardMarkup:
     """Numbered buttons that open each game's card."""
     buttons = [btn(str(i), f"o:{mid}") for i, mid in enumerate(match_ids, 1)]
-    return InlineKeyboardMarkup(inline_keyboard=[buttons])
+    return InlineKeyboardMarkup(inline_keyboard=[buttons[i : i + 5] for i in range(0, len(buttons), 5)])
 
 
 # -- shared bits -------------------------------------------------------------
@@ -101,30 +100,53 @@ async def match_card(svc: Service, match_id: int) -> tuple[str, InlineKeyboardMa
     return render.summary(m, heroes, friends), kb_summary(m, heroes, friends)
 
 
-async def last_card(svc: Service, f: Friend) -> tuple[str, InlineKeyboardMarkup | None]:
-    match_id = await svc.last_match_id(f.account_id)
-    if not match_id:
-        return f"No recent matches for {render.escape(f.name)}. Is Expose Public Match Data on?", None
-    return await match_card(svc, match_id)
-
-
-async def history_card(svc: Service, f: Friend) -> tuple[str, InlineKeyboardMarkup | None]:
-    games = await svc.player_games(f.account_id, HISTORY_N, force=True)
+async def friend_card(svc: Service, f: Friend, n: int) -> tuple[str, InlineKeyboardMarkup | None]:
+    """n == 1: that game's card. n > 1: a one-line-per-game list."""
+    if n == 1:
+        match_id = await svc.last_match_id(f.account_id)
+        if not match_id:
+            return f"No recent matches for {render.escape(f.name)}. Is Expose Public Match Data on?", None
+        return await match_card(svc, match_id)
+    games = await svc.player_games(f.account_id, n, force=True)
     heroes = await svc.od.heroes()
     kb = kb_open([m.match_id for m, _ in games]) if games else None
     return render.history(f.name, games, heroes), kb
 
 
-def resolve(svc: Service, args: str | None) -> Friend | str | None:
+async def group_card(svc: Service, n: int) -> tuple[str, InlineKeyboardMarkup | None]:
+    if n == 1:
+        groups = await svc.group_matches(1, force=True)
+        if not groups:
+            return "No game with 2+ of you together in everyone's last 20 matches.", None
+        return await match_card(svc, groups[0].match_id)
+    items = await svc.group_history(n, force=True)
+    heroes = await svc.od.heroes()
+    title = "Last game together" if len(items) == 1 else f"Last {len(items)} games together"
+    kb = kb_open([g.match_id for g, _ in items]) if items else None
+    return render.our_history(items, heroes, svc.friends_map(), title), kb
+
+
+def parse_args(args: str | None) -> tuple[str, int]:
+    """'nick 5' / '5 nick' / '5' / 'nick' -> (name, count). Small numbers are counts."""
+    name, n = [], 1
+    for word in (args or "").split():
+        if word.isdigit() and int(word) <= 100:
+            n = int(word)
+        else:
+            name.append(word)
+    return " ".join(name), max(1, min(MAX_N, n))
+
+
+def resolve(svc: Service, name: str) -> Friend | str | None:
     """Friend, an error message, or None if no name was given."""
-    if not args or not args.strip():
+    if not name.strip():
         return None
-    hit = find_friend(svc.roster, args)
+    hit = find_friend(svc.roster, name)
     if isinstance(hit, Friend):
         return hit
     if isinstance(hit, list):
         return "Did you mean " + " or ".join(render.escape(f.name) for f in hit) + "?"
-    return f"No one called “{render.escape(args.strip())}” on the list."
+    return f"No one called “{render.escape(name.strip())}” on the list."
 
 
 async def typing(message: Message) -> None:
@@ -134,17 +156,10 @@ async def typing(message: Message) -> None:
         pass
 
 
-async def for_friend(message: Message, command: CommandObject, svc: Service, action: str, builder) -> None:
-    target = resolve(svc, command.args)
-    if target is None:
-        await message.reply("Whose?", reply_markup=kb_pick(svc.roster, action))
-        return
-    if isinstance(target, str):
-        await message.reply(target, reply_markup=kb_pick(svc.roster, action))
-        return
+async def reply_with(message: Message, builder, *args) -> None:
     await typing(message)
     try:
-        text, kb = await builder(svc, target)
+        text, kb = await builder(*args)
     except OpenDotaError as e:
         text, kb = str(e), None
     await message.reply(text, reply_markup=kb)
@@ -166,39 +181,18 @@ async def cmd_scoring(message: Message) -> None:
 
 @router.message(Command("last"))
 async def cmd_last(message: Message, command: CommandObject, svc: Service) -> None:
-    await for_friend(message, command, svc, "l", last_card)
-
-
-@router.message(Command("history"))
-async def cmd_history(message: Message, command: CommandObject, svc: Service) -> None:
-    await for_friend(message, command, svc, "h", history_card)
+    name, n = parse_args(command.args)
+    target = resolve(svc, name)
+    if target is None or isinstance(target, str):
+        await message.reply(target or "Whose?", reply_markup=kb_pick(svc.roster, n))
+        return
+    await reply_with(message, friend_card, svc, target, n)
 
 
 @router.message(Command("ourlast"))
-async def cmd_ourlast(message: Message, svc: Service) -> None:
-    await typing(message)
-    try:
-        groups = await svc.group_matches(1, force=True)
-        if not groups:
-            await message.reply("No game with 2+ of you together in everyone's last 20 matches.")
-            return
-        text, kb = await match_card(svc, groups[0].match_id)
-    except OpenDotaError as e:
-        text, kb = str(e), None
-    await message.reply(text, reply_markup=kb)
-
-
-@router.message(Command("ourhistory"))
-async def cmd_ourhistory(message: Message, svc: Service) -> None:
-    await typing(message)
-    try:
-        items = await svc.group_history(HISTORY_N, force=True)
-        heroes = await svc.od.heroes()
-        text = render.our_history(items, heroes, svc.friends_map(), "Last game together" if len(items) == 1 else f"Last {len(items)} games together")
-        kb = kb_open([g.match_id for g, _ in items]) if items else None
-    except OpenDotaError as e:
-        text, kb = str(e), None
-    await message.reply(text, reply_markup=kb)
+async def cmd_ourlast(message: Message, command: CommandObject, svc: Service) -> None:
+    _, n = parse_args(command.args)
+    await reply_with(message, group_card, svc, n)
 
 
 @router.message(Command("match"))
@@ -250,15 +244,14 @@ async def edit(cb: CallbackQuery, text: str, kb: InlineKeyboardMarkup | None) ->
 async def on_pick(cb: CallbackQuery, svc: Service) -> None:
     """A name was tapped under 'Whose?'."""
     try:
-        _, action, idx = cb.data.split(":")
-        friend = svc.roster[int(idx)]
+        _, idx, n = cb.data.split(":")
+        friend, n = svc.roster[int(idx)], max(1, min(MAX_N, int(n)))
     except (ValueError, IndexError):
         await cb.answer()
         return
     await cb.answer(f"Loading {friend.name}…")
-    builder = last_card if action == "l" else history_card
     try:
-        text, kb = await builder(svc, friend)
+        text, kb = await friend_card(svc, friend, n)
     except OpenDotaError as e:
         text, kb = str(e), None
     await edit(cb, text, kb)

@@ -12,15 +12,14 @@ A small Telegram bot for a friend group. Ask it about a match and it tells you w
 
 | Command | What it does |
 |---|---|
-| `/last [name]` | Someone's last game. No name → tap a name button |
-| `/ourlast` | The squad's last game (2+ friends in it) |
-| `/history [name]` | Someone's last 5 games, one line each. Tap a number to open the card |
-| `/ourhistory` | The squad's last 5 games together |
+| `/last [name] [N]` | Someone's last game. With N: a list of their last N games (max 20); tap a number to open one. No name → tap a name button |
+| `/ourlast [N]` | The squad's last game (2+ friends in it), or a list of the last N |
 | `/match <id>` | Rate any match |
 | `/week`, `/month` | Leaderboard and awards |
 | `/scoring` | Short explanation of the formula |
 
-Names match loosely: `/last nick`, `/history smurf`. An exact name wins, so `/last gs` means GS, not GS Smurf.
+Examples: `/last`, `/last nick`, `/last nick 5`, `/last 5` (then tap a name), `/ourlast 10`.
+Names match loosely: `/last smurf` finds GS Smurf. An exact name wins, so `/last gs` means GS, not GS Smurf.
 
 ## Friend list
 

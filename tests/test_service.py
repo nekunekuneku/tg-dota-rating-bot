@@ -127,3 +127,14 @@ def test_group_matches_needs_two_friends(tmp_path):
         await db.close()
 
     run(go())
+
+
+def test_parse_last_args():
+    from bot.handlers import parse_args
+
+    assert parse_args(None) == ("", 1)
+    assert parse_args("nick") == ("nick", 1)
+    assert parse_args("nick 5") == ("nick", 5)
+    assert parse_args("5 gs smurf") == ("gs smurf", 5)
+    assert parse_args("99") == ("", 20)  # capped at 20
+    assert parse_args("55775392") == ("55775392", 1)  # big numbers are Friend IDs
