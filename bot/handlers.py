@@ -52,7 +52,7 @@ def kb_summary(m: MatchRating, heroes: dict[int, str], friends: dict[int, str]) 
     for i in range(0, len(why), 3):
         rows.append(why[i : i + 3])
     if not m.parsed:
-        rows.append([btn("🔄 Refresh (replay parsed?)", f"m:{m.match_id}:r")])
+        rows.append([btn("🔄 Refresh", f"m:{m.match_id}:r")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

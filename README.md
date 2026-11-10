@@ -40,15 +40,16 @@ Example card (only friends get comments):
 ❌ We lost as Radiant · 42–67 · 49:57
 Ranked All Pick · #9082054125
 
-👎 Mic (Ember Spirit) · pos 3 · 3/14/22 · 45
-      📉 14 deaths, 2.8 per 10 min (pos 3 normal: 2.0)
-🗑 Andrew (Witch Doctor) · pos 4 · 7/19/18 · 34 · griefer
-      📉 19 deaths, 3.8 per 10 min (pos 4 normal: 2.4)
+Mic (Ember Spirit) · pos 2 · 3/14/22 · 43 (−0.14)
+Andrew (Witch Doctor) · pos 5 · 7/19/18 · 30 (−0.39)
+
+👎 Mic — 14 deaths, 2.8 per 10 min (pos 2 normal: 1.7)
+🗑 Griefer: Andrew — 19 deaths, 3.8 per 10 min (pos 5 normal: 2.4)
 [👥 All players] [🔍 Mic] [🔍 Andrew] [🔄 Refresh]
 ```
 
 - **Win:** best friend is ⭐ MVP (if they're the match MVP) or 💪 best of us, with their best stat. Worst friend 🎒 got carried, plus their worst stat if they were below normal.
-- **Loss:** everyone shows their worst stat, except the best friend if they were above normal (👍, best stat). Worst friend is 🗑 griefer.
+- **Loss:** everyone shows their worst stat, except the best friend if they were above normal (👍 best of us, with their best stat). Worst friend is 🗑 griefer.
 - The stat picked is the one that moved their score most for their role.
 
 ## Setup

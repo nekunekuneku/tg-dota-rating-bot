@@ -62,7 +62,7 @@ Each row adds up to 100:
 score = Σ(component × weight) / Σ(weight of components we have data for)
 ```
 
-When the replay isn't parsed yet, vision and stuns are missing. They're **dropped, and the other weights are scaled up**. Missing data is never treated as a zero. The card says "Preliminary" until the replay is parsed. Tap 🔄 to re-check.
+When the replay isn't parsed yet, vision and stuns are missing. They're **dropped, and the other weights are scaled up**. Missing data is never treated as a zero. Until the replay is parsed, the card warns that roles and some stats may be wrong. Tap 🔄 Refresh to re-check.
 
 ## 4. Verdicts
 

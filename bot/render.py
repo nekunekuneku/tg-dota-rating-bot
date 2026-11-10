@@ -82,7 +82,6 @@ def squad_lines(side: list[PlayerRating], won: bool, mvp_slot: int | None, heroe
     best, worst = side[0], side[-1]
     solo = len(side) == 1
     notes: dict[int, tuple[str, str, object]] = {}  # slot -> (icon, tag, Component | None)
-    good_stat: set[int] = set()  # slots whose stat is shown as a strength
 
     if won:
         for r in side:
@@ -90,7 +89,6 @@ def squad_lines(side: list[PlayerRating], won: bool, mvp_slot: int | None, heroe
         if not solo:
             notes[worst.slot] = ("🎒", "got carried", worst.worst_stat() if worst.ruin_meter < 0 else None)
         good = best.best_stat()
-        good_stat.add(best.slot)
         notes[best.slot] = (
             ("⭐", "MVP") if best.slot == mvp_slot else ("💪", "best of us")
         ) + ((good if good and good.score > 50 else None),)
@@ -100,18 +98,27 @@ def squad_lines(side: list[PlayerRating], won: bool, mvp_slot: int | None, heroe
         best_ok = best.ruin_meter > 0
         if best_ok:
             notes[best.slot] = ("👍", "best of us", best.best_stat())
-            good_stat.add(best.slot)
         if not (solo and best_ok):
             notes[worst.slot] = ("🗑", "griefer", worst.worst_stat())
 
-    lines = []
+    # Match stats first, one line per friend...
+    lines = [
+        f"{who(r, heroes, friends)} · pos {r.position} · {r.kda} · <b>{round(r.score)}</b> ({signed(r.ruin_meter)})"
+        for r in side
+    ]
+    # ...then the comments underneath.
+    comments = []
     for r in side:
         icon, tag, stat = notes[r.slot]
-        tag = f" · <b>{tag}</b>" if tag else ""
-        lines.append(f"{icon} {who(r, heroes, friends)} · pos {r.position} · {r.kda} · <b>{round(r.score)}</b>{tag}")
+        if not tag and not stat:
+            continue
+        name = escape(friends.get(r.account_id, "?"))
+        text = f"{icon} <b>{tag[0].upper() + tag[1:]}</b>: {name}" if tag else f"{icon} {name}"
         if stat:
-            arrow = "📈" if r.slot in good_stat else "📉"
-            lines.append(f"      {arrow} {escape(stat.stat)}")
+            text += f" — {escape(stat.stat)}"
+        comments.append(text)
+    if comments:
+        lines += [""] + comments
     return lines
 
 
@@ -147,7 +154,10 @@ def summary(m: MatchRating, heroes: dict[int, str], friends: dict[int, str]) -> 
             lines.append(f"💀 Threw?: {who(r, heroes, friends)} — {round(r.score)}{blame}")
 
     if not m.parsed:
-        lines.append("\n<i>Preliminary: replay not parsed yet, so wards and stuns aren't counted.</i>")
+        lines.append(
+            "\n⚠️ <i>Replay not parsed yet, so roles and some stats may be wrong. "
+            "Give it a few minutes, then tap 🔄 Refresh.</i>"
+        )
     return "\n".join(lines)
 
 

@@ -20,7 +20,13 @@ def test_summary_is_compact(match):
     assert len(text.splitlines()) <= 14
     assert "Danil" in text and "Ruslan" in text
     assert "Friends on both sides" in text  # Danil is Radiant, Ruslan is Dire
-    assert "Preliminary" in text
+    assert "Replay not parsed yet" in text
+
+
+def stats_then_comments(text):
+    """Split the card body into the stats block and the comments block."""
+    blocks = [b.splitlines() for b in text.split("\n\n")]
+    return blocks[1], blocks[2]
 
 
 def test_squad_loss_rules(match):
@@ -28,14 +34,13 @@ def test_squad_loss_rules(match):
     friends = {1000: "Danil", 1001: "Ruslan", 1003: "Mic"}
     text = visible(render.summary(rate_match(match), HEROES, friends))
     print("\n" + text)
-    lines = text.splitlines()
-    assert lines[0].startswith("❌ We lost as Radiant")
-    ruslan = next(i for i, l in enumerate(lines) if "Ruslan" in l)
-    assert "👍" in lines[ruslan] and "best of us" in lines[ruslan] and "📈" in lines[ruslan + 1]
-    danil = next(i for i, l in enumerate(lines) if "Danil" in l)
-    assert "griefer" in lines[danil] and "📉" in lines[danil + 1]
-    mic = next(i for i, l in enumerate(lines) if "Mic" in l)
-    assert "👎" in lines[mic] and "📉" in lines[mic + 1]
+    assert text.startswith("❌ We lost as Radiant")
+    stats, comments = stats_then_comments(text)
+    assert [l.split(" (")[0] for l in stats] == ["Ruslan", "Mic", "Danil"]  # best first
+    assert all("/" in l for l in stats)  # KDA on every stats line
+    assert comments[0].startswith("👍 Best of us: Ruslan — ")
+    assert comments[1].startswith("👎 Mic — ")
+    assert comments[2].startswith("🗑 Griefer: Danil — ")
     assert "MVP" not in text and "Best on losing side" not in text  # no comments on randoms
 
 
@@ -44,29 +49,24 @@ def test_squad_win_rules(match):
     friends = {1128: "Nick", 1129: "Andrew", 1132: "QG"}
     text = visible(render.summary(rate_match(match), HEROES, friends))
     print("\n" + text)
-    lines = text.splitlines()
-    assert lines[0].startswith("✅ We won as Dire")
-    nick = next(i for i, l in enumerate(lines) if "Nick" in l)
-    assert "⭐" in lines[nick] and "MVP" in lines[nick] and "📈" in lines[nick + 1]
-    qg = next(i for i, l in enumerate(lines) if "QG" in l)
-    assert "got carried" in lines[qg]
-    assert qg + 1 == len(lines) or "📉" not in lines[qg + 1]  # 64 is above normal: no bad stat
-    andrew = next(i for i, l in enumerate(lines) if "Andrew" in l)
-    assert "▫️" in lines[andrew]
+    assert text.startswith("✅ We won as Dire")
+    stats, comments = stats_then_comments(text)
+    assert len(stats) == 3
+    assert comments[0].startswith("⭐ MVP: Nick — ")
+    assert comments[1] == "🎒 Got carried: QG"  # 64 is above normal: no bad stat
+    assert len(comments) == 2  # Andrew, in the middle, gets no comment
 
 
 def test_win_best_not_mvp_and_carried_with_bad_stat(match):
-    # 1129 Rubick is best of these two but not match MVP; 1132's score pushed below normal
     for p in match["players"]:
         if p["player_slot"] == 132:
-            p.update(deaths=20, assists=2)
+            p.update(deaths=20, assists=2)  # push QG below normal
     friends = {1129: "Andrew", 1132: "QG"}
     text = visible(render.summary(rate_match(match), HEROES, friends))
     print("\n" + text)
-    assert "💪" in text and "best of us" in text and "MVP" not in text
-    lines = text.splitlines()
-    qg = next(i for i, l in enumerate(lines) if "QG" in l)
-    assert "got carried" in lines[qg] and "📉" in lines[qg + 1]
+    _, comments = stats_then_comments(text)
+    assert comments[0].startswith("💪 Best of us: Andrew — ")
+    assert comments[1].startswith("🎒 Got carried: QG — ")
 
 
 def test_all_players_and_why(match):
