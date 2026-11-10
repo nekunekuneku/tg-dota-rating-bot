@@ -9,6 +9,7 @@ from __future__ import annotations
 import time
 from html import escape as _escape
 
+from . import roasts
 from .scoring import COMPONENT_LABELS, MatchRating, PlayerRating
 
 def escape(text: str) -> str:
@@ -100,6 +101,7 @@ def squad_lines(
     heroes: dict[int, str],
     friends: dict[int, str],
     abilities: dict[int, str] | None = None,
+    match_id: int = 0,
 ) -> list[str]:
     """Comments for the friends on one team.
 
@@ -150,7 +152,8 @@ def squad_lines(
         name = escape(friends.get(r.account_id, "?"))
         text = f"{icon} <b>{tag[0].upper() + tag[1:]}</b>: {name}" if tag else f"{icon} {name}"
         if stat:
-            text += f" — {escape(stat.stat)}"
+            good = tag in ("MVP", "best of us")
+            text += f" — {escape(roasts.line(stat, good, f'{match_id}:{r.slot}'))}"
         comments.append(text)
     if comments:
         lines += [""] + comments
@@ -174,14 +177,14 @@ def summary(
         won = ours[0].won
         team = "Radiant" if we_radiant else "Dire"
         lines = [f"{'✅ <b>We won</b>' if won else '❌ <b>We lost</b>'} as {team} · {score}", link, ""]
-        lines += squad_lines(ours, won, mvp_slot, heroes, friends, abilities)
+        lines += squad_lines(ours, won, mvp_slot, heroes, friends, abilities, m.match_id)
     elif len(sides) == 2:
         lines = [f"⚔️ <b>Friends on both sides</b> · {score}", link]
         for radiant in (True, False):
             side = [r for r in ours if r.is_radiant == radiant]
             won = side[0].won
             lines += ["", f"<b>{'Radiant' if radiant else 'Dire'}</b> {'✅' if won else '❌'}"]
-            lines += squad_lines(side, won, mvp_slot, heroes, friends, abilities)
+            lines += squad_lines(side, won, mvp_slot, heroes, friends, abilities, m.match_id)
     else:
         # Nobody from the squad: plain summary of the match.
         lines = [header(m), ""]
@@ -218,6 +221,9 @@ def all_players(m: MatchRating, heroes: dict[int, str], friends: dict[int, str])
     return "\n".join(lines)
 
 
+ROAST_BELOW = 35  # in the breakdown, roast stats under this (only for below-normal players)
+
+
 def why(m: MatchRating, r: PlayerRating, heroes: dict[int, str], friends: dict[int, str]) -> str:
     """Full breakdown of one player's score."""
     lines = [
@@ -229,6 +235,8 @@ def why(m: MatchRating, r: PlayerRating, heroes: dict[int, str], friends: dict[i
         flag = " ⚠️" if c.key in r.failures else ""
         lines.append(f"<b>{c.label}</b> {round(c.score)} <i>(weight {c.weight}%)</i>{flag}")
         lines.append(f"  {escape(c.detail)}")
+        if r.ruin_meter < 0 and c.score < ROAST_BELOW:
+            lines.append(f"  😬 <i>{escape(roasts.line(c, False, f'{m.match_id}:{r.slot}'))}</i>")
 
     if r.skipped:
         names = ", ".join(COMPONENT_LABELS[k] for k in r.skipped)

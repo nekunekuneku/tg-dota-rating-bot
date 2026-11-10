@@ -51,6 +51,7 @@ Andrew (Witch Doctor) · pos 5 · 7/19/18 · 30 (−0.39)
 - **Win:** best friend is ⭐ MVP (if they're the match MVP) or 💪 best of us, with their best stat. Worst friend 🎒 got carried, plus their worst stat if they were below normal.
 - **Loss:** everyone shows their worst stat, except the best friend if they were above normal (👍 best of us, with their best stat). Worst friend is 🗑 griefer.
 - The stat picked is the one that moved their score most for their role.
+- The stat comes with a joke built from the real numbers ("wasn't playing for 14 minutes"). In the 🔍 breakdown, players below normal get a roast under each weak stat. The jokes live in `bot/roasts.py`; add your own.
 
 ## Setup
 
@@ -84,6 +85,7 @@ bot/benchmarks.py  fallback hero percentiles when OpenDota omits them
 bot/opendota.py    API client + SQLite cache
 bot/service.py     glue: "last match of X", "games this week", ...
 bot/render.py      message text
+bot/roasts.py      the jokes
 bot/handlers.py    Telegram commands and buttons
 bot/db.py          SQLite
 ```

@@ -30,7 +30,7 @@ PLAYER_KEYS = (
     "kills", "deaths", "assists", "last_hits", "denies", "gold_per_min", "xp_per_min",
     "net_worth", "total_gold", "hero_damage", "tower_damage", "hero_healing",
     "lane_role", "is_roaming", "obs_placed", "sen_placed", "observer_kills", "sentry_kills",
-    "stuns", "camps_stacked", "benchmarks", "rank_tier", "ability_upgrades_arr",
+    "stuns", "camps_stacked", "benchmarks", "rank_tier", "ability_upgrades_arr", "life_state_dead",
 )  # fmt: skip
 
 UNPARSED_TTL = 10 * 60  # re-fetch unparsed matches after 10 min
@@ -102,7 +102,7 @@ class OpenDota:
     # -- matches -------------------------------------------------------------
 
     async def match(self, match_id: int, force: bool = False) -> dict | None:
-        key = f"match3:{match_id}"
+        key = f"match4:{match_id}"
         if not force:
             cached = await self.db.cache_get(key, UNPARSED_TTL)
             if cached is not None:

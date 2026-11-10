@@ -80,6 +80,7 @@ class Component:
     weight: int  # from WEIGHTS for this player's position
     detail: str  # human-readable "why"
     stat: str = ""  # short version for the match card, e.g. "14 deaths, 3.5 per 10 min"
+    values: dict = field(default_factory=dict)  # raw numbers, for the jokes in roasts.py
 
     @property
     def label(self) -> str:
@@ -293,7 +294,7 @@ def _farm(p: dict, pos: int) -> Component | None:
         detail += f", {p.get('last_hits', 0)} LH"
     detail += f" - {_pct_text(avg)}"
     stat = f"{p.get('gold_per_min', 0)} GPM, farm in the {_rank(avg)}"
-    return Component("farm", avg * 100, 0, detail, stat)
+    return Component("farm", avg * 100, 0, detail, stat, dict(gpm=p.get("gold_per_min") or 0, rank=_rank(avg)))
 
 
 def _damage(p: dict, pos: int) -> Component | None:
@@ -306,7 +307,9 @@ def _damage(p: dict, pos: int) -> Component | None:
     if raw is not None:
         detail += f" ({round(raw)}/min)"
     detail += f" - {_pct_text(pct)}"
-    return Component("damage", pct * 100, 0, detail, f"{_k(dmg)} hero damage, {_rank(pct)}")
+    return Component(
+        "damage", pct * 100, 0, detail, f"{_k(dmg)} hero damage, {_rank(pct)}", dict(dmg=_k(dmg), rank=_rank(pct))
+    )
 
 
 def _buildings(p: dict, pos: int) -> Component | None:
@@ -315,7 +318,12 @@ def _buildings(p: dict, pos: int) -> Component | None:
         return None
     td = p.get("tower_damage") or 0
     return Component(
-        "buildings", pct * 100, 0, f"{td:,} building damage - {_pct_text(pct)}", f"{_k(td)} building damage, {_rank(pct)}"
+        "buildings",
+        pct * 100,
+        0,
+        f"{td:,} building damage - {_pct_text(pct)}",
+        f"{_k(td)} building damage, {_rank(pct)}",
+        dict(td=_k(td), rank=_rank(pct)),
     )
 
 
@@ -332,6 +340,7 @@ def _kp(p: dict, pos: int, team_kills: int) -> Component | None:
         0,
         f"in {round(kp * 100)}% of team kills (normal for pos {pos}: {round(norm * 100)}%)",
         f"in {round(kp * 100)}% of team kills (pos {pos} normal: {round(norm * 100)}%)",
+        dict(kp=round(kp * 100), missed=100 - round(kp * 100), team_kills=team_kills),
     )
 
 
@@ -342,22 +351,36 @@ def _deaths(p: dict, pos: int, minutes: float) -> Component | None:
     per10 = d / minutes * 10
     norm = DEATHS_NORM[pos]
     score = around_norm(per10, norm, DEATHS_SPREAD, higher_is_better=False)
+    # Time spent dead: exact from a parsed replay, else ~45 s per death
+    # (about the average respawn in a 40-50 minute pub).
+    dead = p.get("life_state_dead")
+    exact = dead is not None
+    dead_sec = float(dead) if exact else d * 45.0
+    dead_min = round(dead_sec / 60)
+    values = dict(
+        deaths=d,
+        dead_min=f"{dead_min}" if exact else f"~{dead_min}",
+        dead_pct=f"{round(dead_sec / (minutes * 60) * 100)}%" if exact else f"~{round(dead_sec / (minutes * 60) * 100)}%",
+    )
     return Component(
         "deaths",
         score,
         0,
         f"{d} deaths = {per10:.1f} per 10 min (normal for pos {pos}: {norm})",
         f"{d} deaths, {per10:.1f} per 10 min (pos {pos} normal: {norm})",
+        values,
     )
 
 
 def _impact(p: dict, pos: int, minutes: float) -> Component | None:
     """Stuns (parsed replays only) and healing (only for heroes that heal)."""
     parts: list[tuple[float, str, str]] = []
+    values: dict = {}
 
     stuns = p.get("stuns")
     if stuns is not None and minutes > 0:
         per_min = float(stuns) / minutes
+        values["stuns"] = f"{float(stuns):.0f}"
         parts.append(
             (
                 around_norm(per_min, STUN_NORM, STUN_SPREAD),
@@ -372,12 +395,16 @@ def _impact(p: dict, pos: int, minutes: float) -> Component | None:
     # 0-healing Sniper would get a random percentile.
     if heal_pct is not None and heal_raw is not None and heal_raw >= 30:
         heal = p.get("hero_healing") or 0
+        values["heal"] = _k(heal)
+        values["heal_rank"] = _rank(heal_pct)
         parts.append((heal_pct * 100, f"{heal:,} healing - {_pct_text(heal_pct)}", f"{_k(heal)} healing, {_rank(heal_pct)}"))
 
     if not parts:
         return None
     score = sum(s for s, _, _ in parts) / len(parts)
-    return Component("impact", score, 0, "; ".join(d for _, d, _ in parts), ", ".join(st for _, _, st in parts))
+    return Component(
+        "impact", score, 0, "; ".join(d for _, d, _ in parts), ", ".join(st for _, _, st in parts), values
+    )
 
 
 def _vision(p: dict, pos: int, minutes: float) -> Component | None:
@@ -397,6 +424,7 @@ def _vision(p: dict, pos: int, minutes: float) -> Component | None:
         0,
         f"{obs} obs, {sen} sentries, {dewards} dewards = {per10:.1f}/10 min (normal for pos {pos}: {norm})",
         f"{obs + sen} wards, {dewards} dewards",
+        dict(wards=obs + sen, dewards=dewards),
     )
 
 
