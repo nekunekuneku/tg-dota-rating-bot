@@ -147,3 +147,29 @@ def test_week_links_game_and_shame(match):
     assert "Shame of the month" in month and "of the week" not in month
     # same match for both here, so only one button
     assert [b.callback_data for b in kb_highlights(rows, 7).inline_keyboard[0]] == ["o:8000000001"]
+
+
+def test_breakdown_uses_quote_blocks_and_valid_html(match):
+    """Each stat's detail goes in a <blockquote> so wrapped lines stay indented."""
+    from html.parser import HTMLParser
+
+    m = rate_match(match)
+    text = render.why(m, m.player_by_slot(0), HEROES, FRIENDS)
+    r = m.player_by_slot(0)
+    assert text.count("<blockquote>") == len(r.components) == text.count("</blockquote>")
+    assert "Stuns &amp; healing" in text or "Stuns & healing" not in text
+
+    class Check(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.stack = []
+
+        def handle_starttag(self, tag, attrs):
+            self.stack.append(tag)
+
+        def handle_endtag(self, tag):
+            assert self.stack and self.stack.pop() == tag, tag
+
+    c = Check()
+    c.feed(text)
+    assert not c.stack
