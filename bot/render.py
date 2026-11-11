@@ -143,7 +143,7 @@ def squad_lines(
         )
         skills = drafted(r, abilities) if abilities else ""
         if skills:
-            lines.append(f"      🎲 {skills}")
+            lines.append(f"└ 🎲 {skills}")
     # ...then the comments underneath.
     comments = []
     for r in side:
@@ -235,9 +235,11 @@ def why(m: MatchRating, r: PlayerRating, heroes: dict[int, str], friends: dict[i
     for c in sorted(r.components, key=lambda c: -c.weight):
         flag = " ⚠️" if c.key in r.failures else ""
         lines.append(f"<b>{c.label}</b> {round(c.score)} <i>(weight {c.weight}%)</i>{flag}")
-        lines.append(f"  {escape(c.detail)}")
-        if r.ruin_meter < 0 and c.score < ROAST_BELOW:
-            lines.append(f"  😬 <i>{escape(roasts.line(c, False, f'{m.match_id}:{r.slot}'))}</i>")
+        # Tree markers instead of leading spaces: Telegram barely shows indentation.
+        roast = r.ruin_meter < 0 and c.score < ROAST_BELOW
+        lines.append(f"{'├' if roast else '└'} {escape(c.detail)}")
+        if roast:
+            lines.append(f"└ 😬 <i>{escape(roasts.line(c, False, f'{m.match_id}:{r.slot}'))}</i>")
 
     if r.skipped:
         names = ", ".join(COMPONENT_LABELS[k] for k in r.skipped)
