@@ -122,6 +122,14 @@ class DB:
             return None
         return json.loads(data)
 
+    async def cache_entry(self, key: str) -> tuple[dict | list, int, bool] | None:
+        """(data, fetched_at, permanent), whatever its age."""
+        async with self.conn.execute("SELECT data, fetched_at, permanent FROM cache WHERE key = ?", (key,)) as cur:
+            row = await cur.fetchone()
+        if not row:
+            return None
+        return json.loads(row[0]), row[1], bool(row[2])
+
     async def cache_put(self, key: str, data: dict | list, permanent: bool = False) -> None:
         await self.conn.execute(
             "INSERT OR REPLACE INTO cache (key, data, fetched_at, permanent) VALUES (?, ?, ?, ?)",

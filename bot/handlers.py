@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 
@@ -240,8 +241,18 @@ async def cmd_match(message: Message, command: CommandObject, svc: Service) -> N
 
 async def period(message: Message, svc: Service, days: int) -> None:
     status = await message.reply(f"⏳ Crunching the last {days} days for {len(svc.roster)} players…")
+    last_edit = time.monotonic()
+
+    async def progress(done: int, total: int) -> None:
+        # Uncached games take OpenDota a second or two each, so say how far along we are.
+        nonlocal last_edit
+        if done < total and time.monotonic() - last_edit > 4:
+            last_edit = time.monotonic()
+            with contextlib.suppress(Exception):
+                await status.edit_text(f"⏳ Crunching the last {days} days… {done}/{total} games")
+
     try:
-        rows = await svc.period(days)
+        rows = await svc.period(days, progress)
         heroes = await svc.od.heroes()
         await status.edit_text(render.week(rows, heroes, days), reply_markup=kb_highlights(rows, days))
     except OpenDotaError as e:

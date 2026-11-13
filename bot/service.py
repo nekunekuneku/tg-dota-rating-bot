@@ -6,6 +6,7 @@ import asyncio
 import json
 import re
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,6 +16,8 @@ from .scoring import MatchRating, PlayerRating, rate_match
 
 STEAM64_BASE = 76561197960265728
 REFRESH_EVERY = 5 * 60
+
+ProgressFn = Callable[[int, int], Awaitable[None]]
 
 
 @dataclass(frozen=True)
@@ -157,15 +160,47 @@ class Service:
         rated = await asyncio.gather(*(self.rate(g.match_id) for g in groups), return_exceptions=True)
         return [(g, r if isinstance(r, MatchRating) else None) for g, r in zip(groups, rated)]
 
-    async def games_since(self, account_id: int, days: int, cap: int = 25) -> list[tuple[MatchRating, PlayerRating]]:
+    async def match_ids_since(self, account_id: int, days: int, cap: int = 25) -> list[int]:
         data = await self.od._request("GET", f"/players/{account_id}/matches", date=days, limit=cap) or []
         cutoff = time.time() - days * 86400
-        ids = [r["match_id"] for r in data if (r.get("start_time") or 0) >= cutoff][:cap]
-        return await self._rate_for(account_id, ids)
+        return [r["match_id"] for r in data if (r.get("start_time") or 0) >= cutoff][:cap]
 
-    async def period(self, days: int) -> list[dict]:
-        results = await asyncio.gather(*(self.games_since(f.account_id, days) for f in self.roster), return_exceptions=True)
-        return [{"name": f.name, "games": g if isinstance(g, list) else []} for f, g in zip(self.roster, results)]
+    async def period(self, days: int, progress: ProgressFn | None = None) -> list[dict]:
+        """Everyone's games in the last `days` days, for /week and /month.
+
+        Games several friends played together are fetched and rated once.
+        `progress(done, total)` is awaited after each game is rated.
+        """
+        lists = await asyncio.gather(*(self.match_ids_since(f.account_id, days) for f in self.roster), return_exceptions=True)
+        if lists and all(isinstance(r, BaseException) for r in lists):
+            raise OpenDotaError("OpenDota is not responding, try again in a minute")
+        ids_by_friend = [r if isinstance(r, list) else [] for r in lists]
+        unique = list(dict.fromkeys(mid for ids in ids_by_friend for mid in ids))
+
+        done = 0
+
+        async def one(mid: int) -> MatchRating | None:
+            nonlocal done
+            try:
+                return await self.rate(mid)
+            except OpenDotaError:
+                return None
+            finally:
+                done += 1
+                if progress:
+                    await progress(done, len(unique))
+
+        rated = dict(zip(unique, await asyncio.gather(*(one(mid) for mid in unique))))
+        rows = []
+        for f, ids in zip(self.roster, ids_by_friend):
+            games = []
+            for mid in ids:
+                mr = rated.get(mid)
+                p = mr.player_by_account(f.account_id) if mr else None
+                if p:
+                    games.append((mr, p))
+            rows.append({"name": f.name, "games": games})
+        return rows
 
     async def _rate_for(self, account_id: int, match_ids: list[int]) -> list[tuple[MatchRating, PlayerRating]]:
         rated = await asyncio.gather(*(self.rate(mid) for mid in match_ids), return_exceptions=True)

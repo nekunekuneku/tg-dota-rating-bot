@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 import httpx
 
@@ -33,7 +34,9 @@ PLAYER_KEYS = (
     "stuns", "camps_stacked", "benchmarks", "rank_tier", "ability_upgrades_arr", "life_state_dead",
 )  # fmt: skip
 
-UNPARSED_TTL = 10 * 60  # re-fetch unparsed matches after 10 min
+UNPARSED_TTL = 10 * 60  # re-fetch fresh unparsed matches after 10 min (the parse may land)
+OLD_UNPARSED_TTL = 24 * 3600  # ...but a game that ended hours ago and still isn't parsed won't change soon
+OLD_AFTER = 6 * 3600
 RECENT_TTL = 3 * 60
 PROFILE_TTL = 6 * 3600
 HEROES_TTL = 7 * 86400
@@ -56,19 +59,25 @@ def slim_match(m: dict) -> dict:
     return out
 
 
+def unparsed_ttl(m: dict) -> int:
+    ended = (m.get("start_time") or 0) + (m.get("duration") or 0)
+    return OLD_UNPARSED_TTL if time.time() - ended > OLD_AFTER else UNPARSED_TTL
+
+
 def has_real_data(m: dict) -> bool:
     players = m.get("players") or []
     return bool(m.get("duration")) and len(players) >= 2 and any(p.get("hero_id") for p in players)
 
 
 class OpenDota:
-    def __init__(self, db: DB, api_key: str | None = None, concurrency: int = 4):
+    def __init__(self, db: DB, api_key: str | None = None, concurrency: int = 6):
         self.db = db
         self.api_key = api_key
         self.sem = asyncio.Semaphore(concurrency)
-        self.client = httpx.AsyncClient(base_url=BASE, timeout=45.0, headers={"User-Agent": "dota-verdict-bot"})
+        self.client = httpx.AsyncClient(base_url=BASE, timeout=httpx.Timeout(25.0, connect=10.0), headers={"User-Agent": "dota-verdict-bot"})
         self._heroes: dict[int, str] = {}
         self._abilities: dict[int, str] = {}
+        self._inflight: dict[tuple[int, bool], asyncio.Future] = {}
 
     async def close(self) -> None:
         await self.client.aclose()
@@ -102,11 +111,23 @@ class OpenDota:
     # -- matches -------------------------------------------------------------
 
     async def match(self, match_id: int, force: bool = False) -> dict | None:
+        """One fetch per match at a time: friends in the same game share it."""
+        k = (match_id, force)
+        fut = self._inflight.get(k)
+        if fut is None:
+            fut = asyncio.ensure_future(self._match(match_id, force))
+            self._inflight[k] = fut
+            fut.add_done_callback(lambda _: self._inflight.pop(k, None))
+        return await asyncio.shield(fut)
+
+    async def _match(self, match_id: int, force: bool) -> dict | None:
         key = f"match4:{match_id}"
         if not force:
-            cached = await self.db.cache_get(key, UNPARSED_TTL)
-            if cached is not None:
-                return cached
+            entry = await self.db.cache_entry(key)
+            if entry is not None:
+                data, fetched_at, permanent = entry
+                if permanent or time.time() - fetched_at < unparsed_ttl(data):
+                    return data
         raw = await self._request("GET", f"/matches/{match_id}")
         if not raw or not has_real_data(raw):
             # Brand-new matches come back as a stub (no heroes, 0 duration) until

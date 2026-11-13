@@ -138,3 +138,62 @@ def test_parse_last_args():
     assert parse_args("5 gs smurf") == ("gs smurf", 5)
     assert parse_args("99") == ("", 20)  # capped at 20
     assert parse_args("55775392") == ("55775392", 1)  # big numbers are Friend IDs
+
+
+def test_period_fetches_shared_games_once_and_reports_progress(tmp_path):
+    import time
+
+    calls = []
+    raw = copy.deepcopy(BASE_MATCH)
+    now = int(time.time())
+
+    def handler(req: httpx.Request):
+        calls.append(req.url.path)
+        if req.url.path.endswith("/matches") and "/players/" in req.url.path:
+            return httpx.Response(200, json=[{"match_id": 8000000001, "start_time": now - 3600}])
+        if req.url.path.endswith("/matches/8000000001"):
+            return httpx.Response(200, json=raw)
+        return httpx.Response(404)
+
+    async def go():
+        db, od, svc = await make_service(tmp_path, handler)
+        svc.roster = [Friend(1000, "Danil"), Friend(1129, "Ruslan")]  # same game, opposite teams
+        seen = []
+
+        async def progress(done, total):
+            seen.append((done, total))
+
+        rows = await svc.period(7, progress)
+        await od.close()
+        await db.close()
+        return rows, seen
+
+    rows, seen = run(go())
+    assert calls.count("/api/matches/8000000001") == 1
+    assert [len(r["games"]) for r in rows] == [1, 1]
+    assert seen == [(1, 1)]
+
+
+def test_old_unparsed_match_stays_cached(tmp_path):
+    import time
+
+    calls = []
+    raw = copy.deepcopy(BASE_MATCH)
+    raw["start_time"] = int(time.time()) - 2 * 86400  # ended two days ago, never parsed
+
+    def handler(req: httpx.Request):
+        calls.append(req.url.path)
+        return httpx.Response(200, json=raw)
+
+    async def go():
+        db, od, svc = await make_service(tmp_path, handler)
+        await od.match(8000000001)
+        # pretend it was cached an hour ago: past the 10-minute window for fresh games
+        await db.conn.execute("UPDATE cache SET fetched_at = fetched_at - 3600")
+        await db.conn.commit()
+        await od.match(8000000001)
+        await od.close()
+        await db.close()
+
+    run(go())
+    assert calls.count("/api/matches/8000000001") == 1
