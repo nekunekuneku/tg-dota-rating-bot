@@ -325,7 +325,9 @@ async def on_match_button(cb: CallbackQuery, svc: Service) -> None:
     note = None
     try:
         if view == "r":
-            await svc.od.request_parse(match_id)
+            # Don't wait on the parse request: OpenDota can sit on it for 30s+,
+            # and Telegram drops a button answer after ~15s.
+            asyncio.create_task(svc.od.request_parse(match_id))
             m = await svc.rate(match_id, force=True)
             if m and not m.parsed:
                 note = "Not parsed yet. Asked OpenDota to parse it, try again in a few minutes."
@@ -353,4 +355,5 @@ async def on_match_button(cb: CallbackQuery, svc: Service) -> None:
         text, kb = render.summary(m, heroes, friends, await abilities_for(svc, m)), kb_summary(m, heroes, friends)
 
     await edit(cb, text, kb)
-    await cb.answer(note or None, show_alert=bool(note))
+    with contextlib.suppress(TelegramBadRequest):  # too late to answer: the card is updated anyway
+        await cb.answer(note or None, show_alert=bool(note))
