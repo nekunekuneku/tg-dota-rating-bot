@@ -54,7 +54,7 @@ class EnvProxySession(AiohttpSession):
 
 COMMANDS = [
     BotCommand(command="last", description="Last game, or /last nick 5 for more"),
-    BotCommand(command="ourlast", description="Squad's last game, or /ourlast 5 for more"),
+    BotCommand(command="ourlast", description="Squad's last game. /ourlast nick andrew 5"),
     BotCommand(command="match", description="Rate a match by ID"),
     BotCommand(command="week", description="Leaderboard, 7 days"),
     BotCommand(command="month", description="Leaderboard, 30 days"),

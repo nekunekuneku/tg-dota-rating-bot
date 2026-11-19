@@ -54,6 +54,36 @@ def find_friend(roster: list[Friend], query: str) -> Friend | list[Friend] | Non
     return None
 
 
+def find_friends(roster: list[Friend], text: str) -> list[Friend] | str:
+    """Several names, e.g. 'nick andrew', 'gs smurf, mic', 'nick and qg'.
+
+    Names can have spaces, so the longest run of words that is exactly a
+    name wins ('gs smurf' is GS Smurf, 'gs' alone is GS); otherwise each word
+    is matched loosely like a single name. Returns the friends, or an error.
+    """
+    words = [w for w in re.split(r"[\s,&+]+", text.lower().replace("@", "")) if w and w != "and"]
+    by_name = {f.name.lower(): f for f in roster}
+    out: list[Friend] = []
+    i = 0
+    while i < len(words):
+        for j in range(len(words), i, -1):
+            f = by_name.get(" ".join(words[i:j]))
+            if f:
+                i = j
+                break
+        else:
+            hit = find_friend(roster, words[i])
+            if isinstance(hit, list):
+                return f"“{words[i]}” could be " + " or ".join(h.name for h in hit) + "."
+            if hit is None:
+                return f"No one called “{words[i]}” on the list."
+            f = hit
+            i += 1
+        if f not in out:
+            out.append(f)
+    return out
+
+
 def parse_account_id(text: str) -> int | None:
     """Accept a Friend ID, a SteamID64, or a Dotabuff/OpenDota/STRATZ/Steam profile URL."""
     t = text.strip()
@@ -129,8 +159,11 @@ class Service:
 
     # -- the group -----------------------------------------------------------
 
-    async def group_matches(self, n: int, min_friends: int = 2, force: bool = False) -> list[GroupMatch]:
-        """Newest matches where at least `min_friends` people from the list played.
+    async def group_matches(
+        self, n: int, min_friends: int = 2, force: bool = False, required: list[Friend] | None = None
+    ) -> list[GroupMatch]:
+        """Newest matches where at least `min_friends` people from the list played
+        (and all of `required`, if given).
 
         Looks through each friend's 20 most recent matches (OpenDota's
         recentMatches - the fast endpoint), so a game shows up as long as it's
@@ -151,12 +184,16 @@ class Service:
                 g = seen.setdefault(r["match_id"], GroupMatch(r["match_id"], r.get("start_time") or 0, []))
                 if f not in g.friends:
                     g.friends.append(f)
-        together = [g for g in seen.values() if len(g.friends) >= min_friends]
+        need = set(required or ())
+        min_friends = max(min_friends, len(need))
+        together = [g for g in seen.values() if len(g.friends) >= min_friends and need <= set(g.friends)]
         together.sort(key=lambda g: -g.start_time)
         return together[:n]
 
-    async def group_history(self, n: int, force: bool = False) -> list[tuple[GroupMatch, MatchRating | None]]:
-        groups = await self.group_matches(n, force=force)
+    async def group_history(
+        self, n: int, force: bool = False, required: list[Friend] | None = None
+    ) -> list[tuple[GroupMatch, MatchRating | None]]:
+        groups = await self.group_matches(n, force=force, required=required)
         rated = await asyncio.gather(*(self.rate(g.match_id) for g in groups), return_exceptions=True)
         return [(g, r if isinstance(r, MatchRating) else None) for g, r in zip(groups, rated)]
 

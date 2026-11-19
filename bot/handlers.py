@@ -16,7 +16,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from . import render
 from .opendota import OpenDotaError
 from .scoring import MatchRating
-from .service import Friend, Service, find_friend, parse_match_id
+from .service import Friend, Service, find_friend, find_friends, parse_match_id
 
 log = logging.getLogger(__name__)
 router = Router()
@@ -26,12 +26,13 @@ MAX_N = 20  # OpenDota's recentMatches returns 20 per player
 HELP = (
     "<b>Who threw?</b> Match verdicts for the squad. I only post when you ask.\n\n"
     "/last <code>[name] [N]</code> – someone's last game, or last N games\n"
-    "/ourlast <code>[N]</code> – the squad's last game (2+ of you), or last N\n"
+    "/ourlast <code>[names] [N]</code> – the squad's last game (2+ of you), or last N. "
+    "Names: only games they all played\n"
     "/match <code>&lt;id&gt;</code> – rate any match\n"
     "/week, /month – leaderboard\n"
     "/scoring – how the score is calculated\n\n"
     "In lists: R ranked · N normal · T turbo · AD ability draft.\n"
-    "Examples: <code>/last nick</code>, <code>/last nick 5</code>, <code>/ourlast 5</code>. "
+    "Examples: <code>/last nick</code>, <code>/last nick 5</code>, <code>/ourlast 5</code>, <code>/ourlast nick andrew 3</code>. "
     "Leave the name out and I'll show buttons to pick who."
 )
 
@@ -143,16 +144,28 @@ async def friend_card(svc: Service, f: Friend, n: int) -> tuple[str, InlineKeybo
     return render.history(f.name, games, heroes), kb
 
 
-async def group_card(svc: Service, n: int) -> tuple[str, InlineKeyboardMarkup | None]:
+async def group_card(svc: Service, n: int, who: list[Friend] | None = None) -> tuple[str, InlineKeyboardMarkup | None]:
+    """The squad's last game(s); with `who`, only games all of them played."""
+    names = " + ".join(render.escape(f.name) for f in who or [])
+    if who and len(who) > 1:
+        empty = f"No game with {names} together in their last 20 matches."
+    elif who:
+        empty = f"No game with {names} and another friend in their last 20 matches."
+    else:
+        empty = "No game with 2+ of you together in everyone's last 20 matches."
     if n == 1:
-        groups = await svc.group_matches(1, force=True)
+        groups = await svc.group_matches(1, force=True, required=who)
         if not groups:
-            return "No game with 2+ of you together in everyone's last 20 matches.", None
+            return empty, None
         return await match_card(svc, groups[0].match_id, latest=True)
-    items = await svc.group_history(n, force=True)
+    items = await svc.group_history(n, force=True, required=who)
+    if not items:
+        return empty, None
     heroes = await svc.od.heroes()
     title = "Last game together" if len(items) == 1 else f"Last {len(items)} games together"
-    kb = kb_open([g.match_id for g, _ in items]) if items else None
+    if who:
+        title += f" with {names}"
+    kb = kb_open([g.match_id for g, _ in items])
     return render.our_history(items, heroes, svc.friends_map(), title), kb
 
 
@@ -221,8 +234,14 @@ async def cmd_last(message: Message, command: CommandObject, svc: Service) -> No
 
 @router.message(Command("ourlast"))
 async def cmd_ourlast(message: Message, command: CommandObject, svc: Service) -> None:
-    _, n = parse_args(command.args)
-    await reply_with(message, group_card, svc, n)
+    names, n = parse_args(command.args)
+    who = None
+    if names:
+        who = find_friends(svc.roster, names)
+        if isinstance(who, str):
+            await message.reply(render.escape(who))
+            return
+    await reply_with(message, group_card, svc, n, who)
 
 
 @router.message(Command("match"))

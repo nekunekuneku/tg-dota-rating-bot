@@ -197,3 +197,48 @@ def test_old_unparsed_match_stays_cached(tmp_path):
 
     run(go())
     assert calls.count("/api/matches/8000000001") == 1
+
+
+def test_find_friends_handles_names_with_spaces():
+    from bot.service import find_friends
+
+    roster = [Friend(1, "Nick"), Friend(2, "GS Smurf"), Friend(3, "GS"), Friend(4, "Andrew")]
+    names = lambda text: [f.name for f in find_friends(roster, text)]  # noqa: E731
+    assert names("nick andrew") == ["Nick", "Andrew"]
+    assert names("gs smurf nick") == ["GS Smurf", "Nick"]
+    assert names("gs nick") == ["GS", "Nick"]
+    assert names("smurf, nick and andrew") == ["GS Smurf", "Nick", "Andrew"]
+    assert names("nick nick") == ["Nick"]
+    assert "No one called" in find_friends(roster, "nick bob")
+
+
+def test_group_matches_with_required_friends(tmp_path):
+    recent = {
+        1000: [{"match_id": 1, "start_time": 30}, {"match_id": 2, "start_time": 20}, {"match_id": 3, "start_time": 10}],
+        1001: [{"match_id": 1, "start_time": 30}, {"match_id": 3, "start_time": 10}],
+        1002: [{"match_id": 1, "start_time": 30}, {"match_id": 2, "start_time": 20}],
+    }
+
+    def handler(req: httpx.Request):
+        aid = int(req.url.path.split("/")[3])
+        return httpx.Response(200, json=recent.get(aid, []))
+
+    async def go():
+        db, od, svc = await make_service(tmp_path, handler)
+        a, b, c = Friend(1000, "A"), Friend(1001, "B"), Friend(1002, "C")
+        svc.roster = [a, b, c]
+        out = (
+            [g.match_id for g in await svc.group_matches(5)],
+            [g.match_id for g in await svc.group_matches(5, required=[a, b])],
+            [g.match_id for g in await svc.group_matches(5, required=[a, b, c])],
+            [g.match_id for g in await svc.group_matches(5, required=[c])],
+        )
+        await od.close()
+        await db.close()
+        return out
+
+    every, ab, abc, c_only = run(go())
+    assert every == [1, 2, 3]
+    assert ab == [1, 3]
+    assert abc == [1]
+    assert c_only == [1, 2]  # C plus at least one other friend
