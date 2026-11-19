@@ -147,12 +147,16 @@ def squad_lines(
     def bad(r):  # worst stat, only for someone who was actually below normal
         return r.worst_stat() if r.ruin_meter < 0 else None
 
+    meh: set[int] = set()  # played fine (50+): a light jab at their weakest stat instead
+
     if won:
         for r in side:
             notes[r.slot] = ("▫️", "", None)
         if not solo:
             icon, tag = tier(worst, WIN_TIERS)
             notes[worst.slot] = (icon, tag, bad(worst))
+            if worst.ruin_meter >= 0:
+                meh.add(worst.slot)
         good = best.best_stat()
         notes[best.slot] = (
             ("⭐", "MVP") if best.slot == mvp_slot else ("💪", "best of us")
@@ -160,7 +164,10 @@ def squad_lines(
     else:
         for r in side:
             notes[r.slot] = ("👎", "", bad(r))
+            if r.ruin_meter >= 0:
+                meh.add(r.slot)
         if best.ruin_meter > 0:
+            meh.discard(best.slot)
             notes[best.slot] = ("👍", "best of us", best.best_stat())
         icon, tag = tier(worst, LOSS_TIERS)
         if tag and not (solo and tag == "weakest link"):
@@ -179,6 +186,13 @@ def squad_lines(
     comments = []
     for r in side:
         icon, tag, stat = notes[r.slot]
+        if r.slot in meh and r.worst_stat():
+            icon = "🔸" if not tag else icon
+            line = roasts.meh(r.worst_stat(), f"{match_id}:{r.slot}", joke_ctx(r, heroes, friends, ability_draft))
+            name = escape(friends.get(r.account_id, "?"))
+            head = f"{icon} <b>{tag[0].upper() + tag[1:]}</b>: {name}" if tag else f"{icon} {name}"
+            comments.append(f"{head} — {escape(line)}")
+            continue
         if not tag and not stat:
             continue
         name = escape(friends.get(r.account_id, "?"))

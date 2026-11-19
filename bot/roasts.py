@@ -171,6 +171,75 @@ GOOD: dict[str, list] = {
 }
 
 
+# For friends who played fine (score 50+) but still had a weakest area.
+# Lighter than BAD. {label} is the stat's name, {c_score} its 0-100 score.
+MEH: dict[str, list] = {
+    "deaths": [
+        "{deaths} deaths, {dead_min} minutes dead. The one thing to tidy up",
+        "solid game, apart from {dead_min} minutes as a spectator",
+        "died {deaths} times. Not a disaster, not a flex either",
+        "{kda}. Fine, but the respawn timer got to know them",
+    ],
+    "kp": [
+        "only in {kp}% of the fights. Show up more and it's a great game",
+        "missed {missed}% of the fights. Good when there, just wasn't always there",
+        "{kp}% kill participation. Fashionably late to every fight",
+    ],
+    "farm": [
+        "{gpm} GPM. Fine, but the map had more gold on it",
+        "{lh} last hits in {mins} minutes. Respectable, not scary",
+        "farm was a bit light ({gpm} GPM). A few more camps and it's a great game",
+    ],
+    "damage": [
+        "{dmg} hero damage, {rank}. Could've hit things harder",
+        "damage was the soft spot: {dmg}. Present, not threatening",
+        "{dmg} hero damage. The enemy barely noticed",
+    ],
+    "buildings": [
+        "{td} building damage. The towers were never worried",
+        "{td} tower damage. Buildings are allowed to be hit, you know",
+    ],
+    "impact_stun": [
+        "{stuns}s of stuns. Could've locked down a bit more",
+        "only {stuns}s of disable. The enemy mostly walked free",
+    ],
+    "impact_heal": [
+        "{heal} healing. The team could've used a bit more love",
+    ],
+    "impact": [
+        "impact was the soft spot: {stat}",
+    ],
+    "vision": [
+        "{wards} wards. The map stayed a bit dark",
+        "vision was light: {wards} wards, {dewards} dewards",
+    ],
+    # their worst stat was still above normal: nothing to roast
+    "_fine": [
+        "weakest area was {label}, and even that was fine ({stat})",
+        "hard to nitpick. {label} was the 'worst' part: {stat}",
+        "clean game. If you squint, {label} could be better ({stat})",
+    ],
+}
+
+
+def meh(c: Component, seed: str, ctx: dict | None = None) -> str:
+    """A light jab at the weakest stat of someone who played fine."""
+    from .scoring import COMPONENT_LABELS
+
+    key = c.key
+    if key == "impact" and not ("stuns" in c.values and "heal" in c.values):
+        key = "impact_stun" if "stuns" in c.values else "impact_heal"
+    if c.score >= 50:
+        key = "_fine"
+    label = COMPONENT_LABELS.get(c.key, c.key).lower()
+    short = c.stat.split(" (")[0]  # "7 deaths, 1.7 per 10 min (pos 2 normal: 1.7)" -> before the note
+    values = {**(ctx or {}), **c.values, "stat": short, "label": label, "c_score": round(c.score)}
+    options = usable(MEH.get(key, []), values)
+    if not options:
+        return f"weakest area: {label} ({c.stat})"
+    return options[zlib.crc32(f"{seed}:{c.key}:meh".encode()) % len(options)].format(**values)
+
+
 def _stat(*keys):
     return lambda v: v["stat_key"] in keys
 

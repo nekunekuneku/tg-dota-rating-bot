@@ -39,8 +39,8 @@ def test_squad_loss_rules(match):
     assert [l.split(" (")[0] for l in stats] == ["Ruslan", "Mic", "Danil"]  # best first
     assert all("/" in l for l in stats)  # KDA on every stats line
     assert comments[0].startswith("👍 Best of us: Ruslan — ")
-    assert comments[1].startswith("🗑 Griefer: Danil — ")
-    assert len(comments) == 2  # Mic was above normal (58): not roasted for the loss
+    assert comments[1].startswith("🔸 Mic — ")  # above normal (58): a light jab, not a roast
+    assert comments[2].startswith("🗑 Griefer: Danil — ")
     assert "MVP" not in text and "Best on losing side" not in text  # no comments on randoms
 
 
@@ -53,7 +53,8 @@ def test_squad_win_rules(match):
     stats, comments = stats_then_comments(text)
     assert len(stats) == 3
     assert comments[0].startswith("⭐ MVP: Nick — ")
-    assert len(comments) == 1  # QG (64) played well: no "got carried"; Andrew gets nothing
+    assert comments[1].startswith("🔸 QG — ")  # 64: no "got carried", just their weakest stat
+    assert len(comments) == 2  # Andrew, in the middle, gets nothing
 
 
 def test_win_best_not_mvp_and_carried_with_bad_stat(match):
@@ -82,6 +83,16 @@ def test_worst_friend_label_matches_how_bad(match):
         assert render.tier(r, render.LOSS_TIERS)[1] == tag, score
     r.score, r.verdict = 35, "Threw?"
     assert render.tier(r, render.LOSS_TIERS)[1] == "griefer"
+
+
+def test_meh_lines_always_fill_in(match):
+    from bot import roasts
+    m = rate_match(match)
+    for r in m.players:
+        for c in r.components:
+            for seed in range(20):
+                out = roasts.meh(c, str(seed), {"hero": "Pudge", "name": "Bob"})
+                assert "{" not in out and out, out
 
 
 def test_all_players_and_why(match):
