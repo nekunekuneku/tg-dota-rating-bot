@@ -64,5 +64,33 @@ def test_conditions_and_hero_lines(match):
     assert any(zero_kill in t for t in texts) == (c.values["kills"] == 0)
     # every seed gives a fully formatted line, never a raw {placeholder}
     for seed in range(50):
-        out = roasts.line(c, False, str(seed), "Pudge")
+        out = roasts.line(c, False, str(seed), {"hero": "Pudge"})
         assert "{" not in out, out
+
+
+def test_personal_lines(match):
+    """Friends with their own lines get them about half the time, filled in properly."""
+    m = rate_match(match)
+    c = next(c for c in m.player_by_slot(0).components if c.key == "deaths")
+    every = {t for d in roasts.PERSONAL.values() for k in ("good", "bad") for t in (o[1] if isinstance(o, tuple) else o for o in d[k])}
+    for aid in roasts.PERSONAL:
+        for good in (True, False):
+            for mvp in (True, False):
+                ctx = {"account_id": aid, "name": "Bob", "hero": "Pudge", "won": good, "mvp": mvp, "ad": False}
+                outs = [roasts.line(c, good, str(seed), ctx) for seed in range(40)]
+                assert all("{" not in o for o in outs), outs
+    nick = {"account_id": 55775392, "name": "Nick", "hero": "Pudge"}
+    outs = [roasts.line(c, False, str(seed), nick) for seed in range(40)]
+    assert any("Nick" in o for o in outs) and not all("Nick" in o for o in outs)
+    # personal=False: only the regular jokes
+    outs = [roasts.line(c, False, str(seed), {**nick, "personal": False}) for seed in range(40)]
+    assert not any(o in every or "Nick" in o for o in outs)
+
+
+def test_andrew_ability_draft_lines(match):
+    c = next(c for c in rate_match(match).player_by_slot(0).components if c.key == "deaths")
+    base = {"account_id": 100648413, "name": "Andrew", "hero": "Pudge", "won": False, "mvp": False}
+    normal = {roasts.line(c, False, str(s), {**base, "ad": False}) for s in range(60)}
+    draft = {roasts.line(c, False, str(s), {**base, "ad": True}) for s in range(60)}
+    assert any("Go back to Ability Draft" in o for o in normal)
+    assert not any("Go back to Ability Draft" in o for o in draft)

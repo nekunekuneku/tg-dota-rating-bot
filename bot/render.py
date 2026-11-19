@@ -95,6 +95,16 @@ def drafted(r: PlayerRating, abilities: dict[int, str]) -> str:
     return " · ".join(escape(abilities[a]) for a in r.abilities if a in abilities)
 
 
+def joke_ctx(r: PlayerRating, heroes: dict[int, str], friends: dict[int, str], ability_draft: bool, **extra) -> dict:
+    """What a joke may know about the player besides the stat itself."""
+    ctx = dict(account_id=r.account_id, won=r.won, ad=ability_draft, **extra)
+    if heroes.get(r.hero_id):
+        ctx["hero"] = heroes[r.hero_id]
+    if friends.get(r.account_id):
+        ctx["name"] = friends[r.account_id]
+    return ctx
+
+
 def squad_lines(
     side: list[PlayerRating],
     won: bool,
@@ -103,6 +113,7 @@ def squad_lines(
     friends: dict[int, str],
     abilities: dict[int, str] | None = None,
     match_id: int = 0,
+    ability_draft: bool = False,
 ) -> list[str]:
     """Comments for the friends on one team.
 
@@ -154,7 +165,8 @@ def squad_lines(
         text = f"{icon} <b>{tag[0].upper() + tag[1:]}</b>: {name}" if tag else f"{icon} {name}"
         if stat:
             good = tag in ("MVP", "best of us")
-            text += f" — {escape(roasts.line(stat, good, f'{match_id}:{r.slot}', heroes.get(r.hero_id)))}"
+            ctx = joke_ctx(r, heroes, friends, ability_draft, mvp=tag == "MVP", tag=tag)
+            text += f" — {escape(roasts.line(stat, good, f'{match_id}:{r.slot}', ctx))}"
         comments.append(text)
     if comments:
         lines += [""] + comments
@@ -178,14 +190,14 @@ def summary(
         won = ours[0].won
         team = "Radiant" if we_radiant else "Dire"
         lines = [f"{'✅ <b>We won</b>' if won else '❌ <b>We lost</b>'} as {team} · {score}", link, ""]
-        lines += squad_lines(ours, won, mvp_slot, heroes, friends, abilities, m.match_id)
+        lines += squad_lines(ours, won, mvp_slot, heroes, friends, abilities, m.match_id, m.game_mode == ABILITY_DRAFT)
     elif len(sides) == 2:
         lines = [f"⚔️ <b>Friends on both sides</b> · {score}", link]
         for radiant in (True, False):
             side = [r for r in ours if r.is_radiant == radiant]
             won = side[0].won
             lines += ["", f"<b>{'Radiant' if radiant else 'Dire'}</b> {'✅' if won else '❌'}"]
-            lines += squad_lines(side, won, mvp_slot, heroes, friends, abilities, m.match_id)
+            lines += squad_lines(side, won, mvp_slot, heroes, friends, abilities, m.match_id, m.game_mode == ABILITY_DRAFT)
     else:
         # Nobody from the squad: plain summary of the match.
         lines = [header(m), ""]
@@ -232,6 +244,7 @@ def why(m: MatchRating, r: PlayerRating, heroes: dict[int, str], friends: dict[i
         f"Score <b>{round(r.score)}</b>/100 · {verdict_tag(r)} · ruin-meter {signed(r.ruin_meter)}",
         "",
     ]
+    ctx = joke_ctx(r, heroes, friends, m.game_mode == ABILITY_DRAFT, mvp=m.mvp is not None and m.mvp.slot == r.slot)
     for c in sorted(r.components, key=lambda c: -c.weight):
         flag = " ⚠️" if c.key in r.failures else ""
         lines.append(f"<b>{escape(c.label)}</b> {round(c.score)} <i>(weight {c.weight}%)</i>{flag}")
@@ -239,7 +252,8 @@ def why(m: MatchRating, r: PlayerRating, heroes: dict[int, str], friends: dict[i
         # markers only indent the first line on a phone.
         body = escape(c.detail)
         if r.ruin_meter < 0 and c.score < ROAST_BELOW:
-            body += f"\n😬 <i>{escape(roasts.line(c, False, f'{m.match_id}:{r.slot}', heroes.get(r.hero_id)))}</i>"
+            body += f"\n😬 <i>{escape(roasts.line(c, False, f'{m.match_id}:{r.slot}', ctx))}</i>"
+            ctx = {**ctx, "personal": False}  # a personal line at most once per breakdown
         lines.append(f"<blockquote>{body}</blockquote>")
 
     if r.skipped:

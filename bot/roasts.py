@@ -17,6 +17,12 @@ A line can also be a (condition, text) pair, e.g.
     (lambda v: v["kills"] == 0, "{kda}. Not one kill")
 and is only used when the condition is true. Lines whose values are missing
 for a player are skipped.
+
+PERSONAL holds lines for specific friends (by Dota friend ID). When one
+fits, it's used instead of the stat joke about half the time. An optional
+"name" overrides what {name} says in that friend's personal lines. Personal
+lines can also use {name}, {stat_key} (deaths, farm, ...), {won}, {mvp}
+and {ad} (Ability Draft game).
 """
 
 from __future__ import annotations
@@ -165,6 +171,87 @@ GOOD: dict[str, list] = {
 }
 
 
+def _stat(*keys):
+    return lambda v: v["stat_key"] in keys
+
+
+ANDREW = {
+    "bad": [
+        (lambda v: not v["ad"], "{kda}. Go back to Ability Draft"),
+        (lambda v: not v["ad"], "Go back to Ability Draft. Normal heroes are clearly too hard"),
+        (lambda v: not v["ad"], "{hero} with its own spells was too much for {name}. Back to Ability Draft"),
+        (lambda v: not v["ad"], "{name} queued normal Dota by mistake. Go back to Ability Draft"),
+        (lambda v: v["ad"], "Bad even in Ability Draft. Nowhere left to go back to"),
+        (lambda v: v["ad"], "Ability Draft, the one mode {name} is meant to be good at. Yikes"),
+    ],
+    "good": [
+        (lambda v: v["ad"], "Ability Draft king. Never leave"),
+        (lambda v: not v["ad"], "Played like it was Ability Draft. Finally"),
+    ],
+}
+
+GS = {
+    "bad": [
+        "No MVP today. {name} is already typing why it's the team's fault",
+        "{kda}. No MVP screenshot for the group chat this time",
+        "Can't farm MVP from the grey screen, {name}",
+        "{name} played for the MVP badge and got neither",
+        (lambda v: not v["won"], "Lost, and no MVP to cry into. Rough day for {name}"),
+    ],
+    "good": [
+        (lambda v: v["mvp"], "MVP again. {name} is already screenshotting it"),
+        (lambda v: v["mvp"], "Another MVP for the trophy cabinet. The other four did the work"),
+        (lambda v: v["mvp"], "MVP. Brace for {name} bringing it up for a week"),
+        (lambda v: v["mvp"], "Played for the MVP, not the team. Worked though"),
+        (lambda v: not v["won"], "Best on a losing team. {name} will still call it an MVP"),
+        (lambda v: not v["mvp"], "Good game, but no MVP. {name} is devastated"),
+    ],
+}
+GS_SMURF = {
+    "name": "GS",  # same person: the jokes call the smurf GS too
+    "bad": GS["bad"] + ["Logged into the smurf to farm MVPs. Still couldn't"],
+    "good": GS["good"] + [(lambda v: v["mvp"], "Smurfing for MVPs. Classy")],
+}
+
+MIC = {
+    "bad": [
+        (_stat("farm"), "{gpm} GPM. Spent minute 30 clearing the small camp again"),
+        (_stat("farm"), "{lh} last hits in {mins} minutes. Every small camp on the map was cleared, the game wasn't"),
+        (_stat("kp"), "missed {missed}% of the fights. The small camp needed {name} more"),
+        (_stat("kp", "damage"), "The team was fighting at the T3s. {name} was at the small camp"),
+        (lambda v: not v["won"], "We lost while {name} farmed the small camp for the 40th time"),
+        (_stat("buildings"), "{td} building damage. Towers aren't small camps, so {name} wasn't interested"),
+    ],
+    "good": [
+        (_stat("farm"), "{gpm} GPM. All those small camps finally paid off"),
+        "{name} left the small camp and won the game",
+    ],
+}
+
+NICK = {
+    "bad": [
+        "Built a bot to flame the squad. The bot chose violence against its creator",
+        "Ultron moment: {name}'s own bot is roasting {name}",
+        "{kda}. {name} wrote the scoring code and still couldn't rig it",
+        "No strings on this bot. {name} can't patch out the truth",
+        "{name} made the bot to judge us. It judged {name} first",
+    ],
+    "good": [
+        "The bot's creator gets a top score. Totally unbiased algorithm, trust",
+        "{name} made the bot and the bot says {name} is great. Nothing suspicious here",
+        "The bot spares its creator today. For now",
+    ],
+}
+
+PERSONAL: dict[int, dict[str, list]] = {
+    100648413: ANDREW,
+    103826341: GS,
+    129229916: GS_SMURF,
+    55636689: MIC,
+    55775392: NICK,
+}
+
+
 def fields(text: str) -> set[str]:
     return {f for _, f, _, _ in Formatter().parse(text) if f}
 
@@ -185,16 +272,27 @@ def usable(options: list, values: dict) -> list[str]:
     return out
 
 
-def line(c: Component, good: bool, seed: str, hero: str | None = None) -> str:
-    """A joke for this stat; falls back to the plain stat text if none fits."""
+def line(c: Component, good: bool, seed: str, ctx: dict | None = None) -> str:
+    """A joke for this stat; falls back to the plain stat text if none fits.
+
+    ctx: what else is known about the player (hero, name, account_id, won,
+    mvp, ad). With personal=False in ctx, personal lines are skipped.
+    """
+    ctx = ctx or {}
     key = c.key
     if key == "impact" and not ("stuns" in c.values and "heal" in c.values):
         key = "impact_stun" if "stuns" in c.values else "impact_heal"
-    values = {**c.values, "stat": c.stat}
-    if hero:
-        values["hero"] = hero
+    values = {"won": False, "mvp": False, "ad": False, **ctx, **c.values, "stat": c.stat, "stat_key": c.key}
+    pick = zlib.crc32(f"{seed}:{c.key}:{good}".encode())
+
+    mine = PERSONAL.get(ctx.get("account_id")) if ctx.get("personal", True) else None
+    if mine:
+        values["name"] = mine.get("name", values.get("name"))
+        options = usable(mine["good" if good else "bad"], values)
+        if options and pick % 2 == 0:
+            return options[(pick // 2) % len(options)].format(**values)
+
     options = usable((GOOD if good else BAD).get(key, []), values)
     if not options:
         return c.stat
-    text = options[zlib.crc32(f"{seed}:{c.key}:{good}".encode()) % len(options)]
-    return text.format(**values)
+    return options[pick % len(options)].format(**values)
