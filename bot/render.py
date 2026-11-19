@@ -154,7 +154,7 @@ def squad_lines(
         text = f"{icon} <b>{tag[0].upper() + tag[1:]}</b>: {name}" if tag else f"{icon} {name}"
         if stat:
             good = tag in ("MVP", "best of us")
-            text += f" — {escape(roasts.line(stat, good, f'{match_id}:{r.slot}'))}"
+            text += f" — {escape(roasts.line(stat, good, f'{match_id}:{r.slot}', heroes.get(r.hero_id)))}"
         comments.append(text)
     if comments:
         lines += [""] + comments
@@ -239,7 +239,7 @@ def why(m: MatchRating, r: PlayerRating, heroes: dict[int, str], friends: dict[i
         # markers only indent the first line on a phone.
         body = escape(c.detail)
         if r.ruin_meter < 0 and c.score < ROAST_BELOW:
-            body += f"\n😬 <i>{escape(roasts.line(c, False, f'{m.match_id}:{r.slot}'))}</i>"
+            body += f"\n😬 <i>{escape(roasts.line(c, False, f'{m.match_id}:{r.slot}', heroes.get(r.hero_id)))}</i>"
         lines.append(f"<blockquote>{body}</blockquote>")
 
     if r.skipped:

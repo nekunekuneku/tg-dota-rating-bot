@@ -22,8 +22,9 @@ def test_every_template_has_its_values(match):
                 key = c.key
                 if key == "impact" and not ("stuns" in c.values and "heal" in c.values):
                     key = "impact_stun" if "stuns" in c.values else "impact_heal"
-                for t in (roasts.GOOD if good else roasts.BAD)[key]:
-                    missing = fields(t) - set(c.values) - {"stat"}
+                for o in (roasts.GOOD if good else roasts.BAD)[key]:
+                    t = o[1] if isinstance(o, tuple) else o
+                    missing = fields(t) - set(c.values) - {"stat", "hero"}
                     assert not missing, (key, t, missing)
                     seen.add(key)
     assert {"deaths", "kp", "farm", "damage", "buildings", "vision", "impact_stun"} <= seen
@@ -45,3 +46,23 @@ def test_unparsed_time_dead_is_marked_as_estimate(match):
 def test_same_seed_same_joke(match):
     c = rate_match(match).player_by_slot(0).components[0]
     assert roasts.line(c, False, "9:0") == roasts.line(c, False, "9:0")
+
+
+def test_every_bad_deaths_line_says_how_long_they_were_dead():
+    for o in roasts.BAD["deaths"]:
+        t = o[1] if isinstance(o, tuple) else o
+        assert {"dead_min", "dead_pct"} & fields(t), t
+
+
+def test_conditions_and_hero_lines(match):
+    c = next(c for c in rate_match(match).player_by_slot(0).components if c.key == "deaths")
+    v = {**c.values, "stat": c.stat}
+    texts = roasts.usable(roasts.BAD["deaths"], v)
+    assert not any("{hero}" in t for t in texts)  # no hero passed
+    assert any("{hero}" in t for t in roasts.usable(roasts.BAD["deaths"], {**v, "hero": "Pudge"}))
+    zero_kill = "Zero kills"
+    assert any(zero_kill in t for t in texts) == (c.values["kills"] == 0)
+    # every seed gives a fully formatted line, never a raw {placeholder}
+    for seed in range(50):
+        out = roasts.line(c, False, str(seed), "Pudge")
+        assert "{" not in out, out

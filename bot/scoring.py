@@ -505,6 +505,16 @@ def rate_match(match: dict) -> MatchRating:
         pos, src = positions[p["player_slot"]]
         score, comps, skipped, coverage = rate_player(p, pos, minutes, team_kills[rad])
         coverages.append(coverage)
+        # Every joke can use the basics, whichever stat it's about.
+        k, d, a = (int(p.get(x) or 0) for x in ("kills", "deaths", "assists"))
+        common = dict(
+            kills=k, deaths=d, assists=a, kda=f"{k}/{d}/{a}",
+            lh=int(p.get("last_hits") or 0), dn=int(p.get("denies") or 0),
+            gpm=int(p.get("gold_per_min") or 0), xpm=int(p.get("xp_per_min") or 0),
+            nw=_k(p.get("net_worth") or p.get("total_gold") or 0), mins=round(minutes), pos=pos,
+        )  # fmt: skip
+        for c in comps:
+            c.values = {**common, **c.values}
         failures = [c.key for c in comps if c.score < FAILURE_SCORE and c.weight >= FAILURE_MIN_WEIGHT]
         r = PlayerRating(
             slot=p["player_slot"],
