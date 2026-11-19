@@ -105,6 +105,21 @@ def joke_ctx(r: PlayerRating, heroes: dict[int, str], friends: dict[int, str], a
     return ctx
 
 
+# Label for the worst friend on the team: (score under, icon, label).
+# The first row the score is under wins; above all of them, no label.
+WIN_TIERS = [(35, "🎒", "got carried"), (50, "🧳", "passenger"), (60, "🔗", "weakest link")]
+LOSS_TIERS = [(30, "🗑", "griefer"), (42, "⚓", "anchor"), (50, "🔗", "weakest link")]
+
+
+def tier(r: PlayerRating, tiers) -> tuple[str, str]:
+    if not r.won and r.verdict == "Threw?":
+        return "🗑", "griefer"
+    for under, icon, tag in tiers:
+        if r.score < under:
+            return icon, tag
+    return "👎", ""
+
+
 def squad_lines(
     side: list[PlayerRating],
     won: bool,
@@ -118,33 +133,38 @@ def squad_lines(
     """Comments for the friends on one team.
 
     Win:  best friend = MVP (if they're the match MVP) or "best of us", with
-          their best stat. Worst friend = "got carried", plus their worst stat
-          if they were below normal.
-    Loss: everyone shows their worst stat, except the best friend if they
-          were above normal (they show their best stat). Worst = "griefer".
+          their best stat. Worst friend gets a label by how bad they were
+          (see WIN_TIERS), plus their worst stat if they were below normal.
+    Loss: everyone below normal shows their worst stat; the best friend, if
+          above normal, shows their best stat. Worst friend gets a label from
+          LOSS_TIERS - nobody is blamed for a loss they played well in.
     """
     side = sorted(side, key=lambda r: -r.score)
     best, worst = side[0], side[-1]
     solo = len(side) == 1
     notes: dict[int, tuple[str, str, object]] = {}  # slot -> (icon, tag, Component | None)
 
+    def bad(r):  # worst stat, only for someone who was actually below normal
+        return r.worst_stat() if r.ruin_meter < 0 else None
+
     if won:
         for r in side:
             notes[r.slot] = ("▫️", "", None)
         if not solo:
-            notes[worst.slot] = ("🎒", "got carried", worst.worst_stat() if worst.ruin_meter < 0 else None)
+            icon, tag = tier(worst, WIN_TIERS)
+            notes[worst.slot] = (icon, tag, bad(worst))
         good = best.best_stat()
         notes[best.slot] = (
             ("⭐", "MVP") if best.slot == mvp_slot else ("💪", "best of us")
         ) + ((good if good and good.score > 50 else None),)
     else:
         for r in side:
-            notes[r.slot] = ("👎", "", r.worst_stat())
-        best_ok = best.ruin_meter > 0
-        if best_ok:
+            notes[r.slot] = ("👎", "", bad(r))
+        if best.ruin_meter > 0:
             notes[best.slot] = ("👍", "best of us", best.best_stat())
-        if not (solo and best_ok):
-            notes[worst.slot] = ("🗑", "griefer", worst.worst_stat())
+        icon, tag = tier(worst, LOSS_TIERS)
+        if tag and not (solo and tag == "weakest link"):
+            notes[worst.slot] = (icon, tag, bad(worst))
 
     # Match stats first, one line per friend (plus drafted skills in Ability Draft)...
     lines = []

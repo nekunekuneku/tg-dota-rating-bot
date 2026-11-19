@@ -39,8 +39,8 @@ def test_squad_loss_rules(match):
     assert [l.split(" (")[0] for l in stats] == ["Ruslan", "Mic", "Danil"]  # best first
     assert all("/" in l for l in stats)  # KDA on every stats line
     assert comments[0].startswith("👍 Best of us: Ruslan — ")
-    assert comments[1].startswith("👎 Mic — ")
-    assert comments[2].startswith("🗑 Griefer: Danil — ")
+    assert comments[1].startswith("🗑 Griefer: Danil — ")
+    assert len(comments) == 2  # Mic was above normal (58): not roasted for the loss
     assert "MVP" not in text and "Best on losing side" not in text  # no comments on randoms
 
 
@@ -53,8 +53,7 @@ def test_squad_win_rules(match):
     stats, comments = stats_then_comments(text)
     assert len(stats) == 3
     assert comments[0].startswith("⭐ MVP: Nick — ")
-    assert comments[1] == "🎒 Got carried: QG"  # 64 is above normal: no bad stat
-    assert len(comments) == 2  # Andrew, in the middle, gets no comment
+    assert len(comments) == 1  # QG (64) played well: no "got carried"; Andrew gets nothing
 
 
 def test_win_best_not_mvp_and_carried_with_bad_stat(match):
@@ -67,6 +66,22 @@ def test_win_best_not_mvp_and_carried_with_bad_stat(match):
     _, comments = stats_then_comments(text)
     assert comments[0].startswith("💪 Best of us: Andrew — ")
     assert comments[1].startswith("🎒 Got carried: QG — ")
+
+
+def test_worst_friend_label_matches_how_bad(match):
+    m = rate_match(match)
+    r = m.player_by_slot(132)  # winner
+    want = [(20, "got carried"), (40, "passenger"), (55, "weakest link"), (70, "")]
+    for score, tag in want:
+        r.score = score
+        assert render.tier(r, render.WIN_TIERS)[1] == tag, score
+    r = m.player_by_slot(1)  # loser
+    r.verdict = "OK"
+    for score, tag in [(25, "griefer"), (35, "anchor"), (45, "weakest link"), (60, "")]:
+        r.score = score
+        assert render.tier(r, render.LOSS_TIERS)[1] == tag, score
+    r.score, r.verdict = 35, "Threw?"
+    assert render.tier(r, render.LOSS_TIERS)[1] == "griefer"
 
 
 def test_all_players_and_why(match):
