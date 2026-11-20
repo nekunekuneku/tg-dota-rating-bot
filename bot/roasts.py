@@ -314,16 +314,16 @@ NICK = {
 
 KAWCH = {
     "bad": [
-        "{kda}. {name}'s head is still in MapleStory",
+        "{kda}. {name}'s head is still in Maple",
         "{name} was mentally grinding mobs in Henesys the whole game",
-        (_stat("farm"), "{gpm} GPM. {name} farms better in MapleStory"),
-        (_stat("kp"), "missed {missed}% of the fights. {name} was off doing a MapleStory boss run"),
-        (lambda v: not v["won"], "Lost. {name} is already back on MapleStory"),
-        "Spent the game scrolling gear in MapleStory. Both failed",
+        (_stat("farm"), "{gpm} GPM. {name} farms better in Maple"),
+        (_stat("kp"), "missed {missed}% of the fights. {name} was off doing a Maple boss run"),
+        (lambda v: not v["won"], "Lost. {name} is already back on Maple"),
+        "Spent the game scrolling gear in Maple. Both failed",
     ],
     "good": [
-        (lambda v: v["mvp"], "Logged off MapleStory long enough to MVP"),
-        "Imagine how good {name} would be without MapleStory",
+        (lambda v: v["mvp"], "Logged off Maple long enough to MVP"),
+        "Imagine how good {name} would be without Maple",
     ],
 }
 
