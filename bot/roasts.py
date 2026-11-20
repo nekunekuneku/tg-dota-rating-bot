@@ -316,16 +316,12 @@ KAWCH = {
     "bad": [
         "{kda}. {name}'s head is still in MapleStory",
         "{name} was mentally grinding mobs in Henesys the whole game",
-        "Immortal rank, Herald game. Too much MapleStory",
-        (_stat("deaths"), "Immortal? {deaths} deaths and {dead_min} minutes dead say otherwise"),
         (_stat("farm"), "{gpm} GPM. {name} farms better in MapleStory"),
         (_stat("kp"), "missed {missed}% of the fights. {name} was off doing a MapleStory boss run"),
         (lambda v: not v["won"], "Lost. {name} is already back on MapleStory"),
         "Spent the game scrolling gear in MapleStory. Both failed",
     ],
     "good": [
-        "Immortal player plays like an Immortal. Who knew",
-        "Took a break from MapleStory to remind everyone of the rank",
         (lambda v: v["mvp"], "Logged off MapleStory long enough to MVP"),
         "Imagine how good {name} would be without MapleStory",
     ],
