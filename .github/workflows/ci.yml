@@ -44,7 +44,13 @@ jobs:
           mkdir -p ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
           if [ -n "$KNOWN_HOSTS" ]; then
-            printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+            # only the "ssh-ed25519 AAAA..." part matters; pair it with DEPLOY_HOST
+            hostkey=$(printf '%s\n' "$KNOWN_HOSTS" | grep -oE 'ssh-ed25519 [A-Za-z0-9+/=]+' | head -1)
+            if [ -z "$hostkey" ]; then
+              echo "::error::DEPLOY_KNOWN_HOSTS has no 'ssh-ed25519 AAAA...' key in it"
+              exit 1
+            fi
+            echo "$HOST $hostkey" > ~/.ssh/known_hosts
             check=yes
           else
             check=accept-new
