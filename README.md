@@ -77,6 +77,32 @@ pip install pytest
 python -m pytest -q
 ```
 
+## Deploying
+
+GitHub Actions (`.github/workflows/ci.yml`) runs the tests on every push. When a
+push to `master` passes, it SSHes into the server, which pulls the new code and
+restarts the bot. If the tests fail, nothing is deployed.
+
+On the server (Ubuntu, bot in `/home/ubuntu/tg-dota-rating-bot`, running as the
+`dota-bot` systemd service), `/usr/local/bin/dota-autopull` does the update:
+fast-forward to `origin/master`, reinstall requirements if they changed, restart.
+
+The deploy SSH key is locked to that one script in `~/.ssh/authorized_keys`:
+
+```
+command="sudo /usr/local/bin/dota-autopull",restrict ssh-ed25519 AAAA... github-deploy
+```
+
+Repository secrets (Settings → Secrets and variables → Actions):
+
+| Secret | Value |
+|---|---|
+| `DEPLOY_HOST` | the server's static IP |
+| `DEPLOY_SSH_KEY` | the private half of the deploy key |
+| `DEPLOY_KNOWN_HOSTS` | `<ip> ssh-ed25519 AAAA...` from the server's `/etc/ssh/ssh_host_ed25519_key.pub` |
+
+Without the secrets, the deploy step is skipped (tests still run).
+
 ## Layout
 
 ```

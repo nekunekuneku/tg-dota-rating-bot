@@ -1,0 +1,50 @@
+name: CI/CD
+
+# Every push and PR runs the tests. A push to master that passes is then
+# deployed to the server over SSH. The server's deploy key can only run the
+# update script (see README, "Deploying"), so these secrets can't do anything else.
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt pytest pytest-asyncio
+      - run: pytest -q
+
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy
+      cancel-in-progress: false
+    steps:
+      - name: Deploy to the server
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          if [ -z "$SSH_KEY" ] || [ -z "$HOST" ]; then
+            echo "::warning::DEPLOY_SSH_KEY / DEPLOY_HOST not set, skipping deploy"
+            exit 0
+          fi
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
+          if [ -n "$KNOWN_HOSTS" ]; then
+            printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+            check=yes
+          else
+            check=accept-new
+          fi
+          ssh -i ~/.ssh/deploy -o StrictHostKeyChecking=$check ubuntu@"$HOST" deploy
