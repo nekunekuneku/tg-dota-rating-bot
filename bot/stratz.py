@@ -12,6 +12,7 @@ only be used from 2 IP addresses per 15 minutes, so don't share it.
 from __future__ import annotations
 
 import logging
+import os
 
 import httpx
 
@@ -34,7 +35,12 @@ class StratzError(Exception):
 
 class Stratz:
     def __init__(self, token: str):
+        # Always connect over IPv4: on a dual-stack server, IPv4 + IPv6 would
+        # count as 2 addresses and use up STRATZ's 2-IP limit on their own.
+        # (Behind an HTTPS proxy the proxy decides, so leave it alone.)
+        proxied = os.getenv("HTTPS_PROXY") or os.getenv("https_proxy")
         self.client = httpx.AsyncClient(
+            transport=None if proxied else httpx.AsyncHTTPTransport(local_address="0.0.0.0"),
             timeout=httpx.Timeout(20.0, connect=10.0),
             # STRATZ asks API users to send this exact User-Agent.
             headers={"Authorization": f"Bearer {token}", "User-Agent": "STRATZ_API"},
