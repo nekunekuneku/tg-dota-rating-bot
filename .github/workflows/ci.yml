@@ -12,6 +12,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -25,6 +26,7 @@ jobs:
     needs: test
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     concurrency:
       group: deploy
       cancel-in-progress: false
@@ -47,4 +49,4 @@ jobs:
           else
             check=accept-new
           fi
-          ssh -i ~/.ssh/deploy -o StrictHostKeyChecking=$check ubuntu@"$HOST" deploy
+          ssh -i ~/.ssh/deploy -o StrictHostKeyChecking=$check -o ConnectTimeout=20 ubuntu@"$HOST" deploy
