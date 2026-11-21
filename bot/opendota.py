@@ -1,9 +1,10 @@
 """Thin async OpenDota client with a SQLite cache.
 
-Only OpenDota is used (no STRATZ): the basic match data is available as soon
-as Valve publishes the match, so the bot can answer right away. Stats that
-need the replay (wards, stuns, lanes) show up after OpenDota parses it; the
-"Refresh" button re-checks.
+Match data comes from OpenDota: the basic data is available as soon as Valve
+publishes the match, so the bot can answer right away. Stats that need the
+replay (wards, stuns, lanes) show up after OpenDota parses it; the "Refresh"
+button re-checks. If OpenDota's per-player match lists fail, STRATZ (when a
+key is set) supplies the match IDs instead - see stratz.py.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ import httpx
 from .benchmarks import fill_benchmarks, needs_benchmarks
 from .db import DB
 from .scoring import is_parsed
+from .stratz import Stratz, StratzError
 
 log = logging.getLogger(__name__)
 
@@ -70,9 +72,10 @@ def has_real_data(m: dict) -> bool:
 
 
 class OpenDota:
-    def __init__(self, db: DB, api_key: str | None = None, concurrency: int = 6):
+    def __init__(self, db: DB, api_key: str | None = None, concurrency: int = 6, backup: Stratz | None = None):
         self.db = db
         self.api_key = api_key
+        self.backup = backup  # STRATZ, for players' match lists when OpenDota's fail
         self.sem = asyncio.Semaphore(concurrency)
         self.client = httpx.AsyncClient(base_url=BASE, timeout=httpx.Timeout(25.0, connect=10.0), headers={"User-Agent": "dota-verdict-bot"})
         self._heroes: dict[int, str] = {}
@@ -81,17 +84,19 @@ class OpenDota:
 
     async def close(self) -> None:
         await self.client.aclose()
+        if self.backup:
+            await self.backup.close()
 
-    async def _request(self, method: str, path: str, **params) -> dict | list | None:
+    async def _request(self, method: str, path: str, tries: int = 3, **params) -> dict | list | None:
         if self.api_key:
             params["api_key"] = self.api_key
-        for attempt in range(3):
+        for attempt in range(tries):
             async with self.sem:
                 try:
                     r = await self.client.request(method, path, params=params)
                 except httpx.HTTPError as e:
                     log.warning("OpenDota %s %s failed: %s", method, path, e)
-                    if attempt == 2:
+                    if attempt == tries - 1:
                         raise OpenDotaError("OpenDota is not responding, try again in a minute") from e
                     await asyncio.sleep(1 + attempt)
                     continue
@@ -178,9 +183,37 @@ class OpenDota:
             cached = await self.db.cache_get(key, RECENT_TTL)
             if cached is not None:
                 return cached
-        data = await self._request("GET", f"/players/{account_id}/recentMatches") or []
+        data = await self._player_list(
+            account_id, f"/players/{account_id}/recentMatches", {}, lambda: self.backup.player_matches(account_id, 20)
+        )
         await self.db.cache_put(key, data)
         return data
+
+    async def matches_since(self, account_id: int, days: int, limit: int = 25) -> list[dict]:
+        """This player's matches from the last `days` days, newest first."""
+        since = int(time.time()) - days * 86400
+        data = await self._player_list(
+            account_id,
+            f"/players/{account_id}/matches",
+            {"date": days, "limit": limit},
+            lambda: self.backup.player_matches(account_id, limit, since),
+        )
+        return [r for r in data if (r.get("start_time") or 0) >= since][:limit]
+
+    async def _player_list(self, account_id: int, path: str, params: dict, from_backup) -> list[dict]:
+        """OpenDota's list, or STRATZ's when OpenDota fails and a STRATZ key is set."""
+        try:
+            # With a backup, don't spend long retrying OpenDota.
+            return await self._request("GET", path, tries=2 if self.backup else 3, **params) or []
+        except OpenDotaError as e:
+            if not self.backup:
+                raise
+            log.warning("OpenDota %s failed (%s), using STRATZ", path, e)
+            try:
+                return await from_backup()
+            except StratzError as e2:
+                log.warning("STRATZ backup failed too: %s", e2)
+                raise e from e2
 
     async def profile(self, account_id: int) -> dict | None:
         key = f"profile:{account_id}"

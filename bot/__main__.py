@@ -18,6 +18,7 @@ from .db import DB
 from .handlers import router
 from .opendota import OpenDota
 from .service import Service, load_roster
+from .stratz import Stratz
 
 
 def load_dotenv(path: str = ".env") -> None:
@@ -73,7 +74,10 @@ async def main() -> None:
 
     db = DB(os.getenv("DB_PATH", "bot.sqlite3"))
     await db.open()
-    od = OpenDota(db, api_key=os.getenv("OPENDOTA_API_KEY") or None)
+    stratz_key = os.getenv("STRATZ_API_KEY")
+    backup = Stratz(stratz_key) if stratz_key else None
+    logging.info("STRATZ backup: %s", "on" if backup else "off (no STRATZ_API_KEY)")
+    od = OpenDota(db, api_key=os.getenv("OPENDOTA_API_KEY") or None, backup=backup)
     roster = load_roster(os.getenv("FRIENDS_FILE", "friends.json"))
     logging.info("friend list: %s", ", ".join(f.name for f in roster))
     svc = Service(db, od, roster)

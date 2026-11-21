@@ -198,9 +198,7 @@ class Service:
         return [(g, r if isinstance(r, MatchRating) else None) for g, r in zip(groups, rated)]
 
     async def match_ids_since(self, account_id: int, days: int, cap: int = 25) -> list[int]:
-        data = await self.od._request("GET", f"/players/{account_id}/matches", date=days, limit=cap) or []
-        cutoff = time.time() - days * 86400
-        return [r["match_id"] for r in data if (r.get("start_time") or 0) >= cutoff][:cap]
+        return [r["match_id"] for r in await self.od.matches_since(account_id, days, cap)]
 
     async def period(self, days: int, progress: ProgressFn | None = None) -> list[dict]:
         """Everyone's games in the last `days` days, for /week and /month.

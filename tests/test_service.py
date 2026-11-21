@@ -242,3 +242,107 @@ def test_group_matches_with_required_friends(tmp_path):
     assert ab == [1, 3]
     assert abc == [1]
     assert c_only == [1, 2]  # C plus at least one other friend
+
+
+def stratz_backup(rows_by_account, seen):
+    """A Stratz client whose HTTP is mocked: returns `rows_by_account[id]` as matches."""
+    import json
+
+    from bot.stratz import Stratz
+
+    def handler(req: httpx.Request):
+        body = json.loads(req.content)
+        seen.append(body["variables"])
+        rows = rows_by_account.get(body["variables"]["id"], [])
+        matches = [{"id": mid, "startDateTime": t} for mid, t in rows]
+        return httpx.Response(200, json={"data": {"player": {"matches": matches}}})
+
+    s = Stratz("test-token")
+    s.client = httpx.AsyncClient(transport=httpx.MockTransport(handler), headers=s.client.headers)
+    return s
+
+
+def no_sleep():
+    import bot.opendota as mod
+
+    real = mod.asyncio.sleep
+    mod.asyncio.sleep = lambda s: real(0)
+    return lambda: setattr(mod.asyncio, "sleep", real)
+
+
+def test_stratz_backup_when_opendota_lists_fail(tmp_path):
+    import time
+
+    now = int(time.time())
+    raw = copy.deepcopy(BASE_MATCH)
+
+    def handler(req: httpx.Request):
+        if "/players/" in req.url.path:
+            return httpx.Response(500, json={"error": "Internal Server Error"})
+        if req.url.path.endswith("/matches/8000000001"):
+            return httpx.Response(200, json=raw)
+        return httpx.Response(404)
+
+    async def go():
+        db, od, svc = await make_service(tmp_path, handler)
+        seen = []
+        od.backup = stratz_backup({1000: [(8000000001, now - 3600), (7, now - 40 * 86400)]}, seen)
+        restore = no_sleep()
+        try:
+            assert await svc.last_match_id(1000) == 8000000001  # /last, /ourlast
+            ids = await svc.match_ids_since(1000, 7)  # /week, /month
+        finally:
+            restore()
+        await od.close()
+        await db.close()
+        return ids, seen
+
+    ids, seen = run(go())
+    assert ids == [8000000001]  # the 40-day-old game is outside the week
+    assert seen[0]["take"] == 20 and seen[0]["since"] is None
+    assert seen[1]["since"] is not None and seen[1]["take"] == 25
+
+
+def test_stratz_not_used_when_opendota_works(tmp_path):
+    def handler(req: httpx.Request):
+        return httpx.Response(200, json=[{"match_id": 5, "start_time": 1}])
+
+    async def go():
+        db, od, svc = await make_service(tmp_path, handler)
+        seen = []
+        od.backup = stratz_backup({}, seen)
+        assert await svc.last_match_id(1000) == 5
+        await od.close()
+        await db.close()
+        return seen
+
+    assert run(go()) == []
+
+
+def test_both_down_gives_the_opendota_error(tmp_path):
+    import pytest
+
+    from bot.opendota import OpenDotaError
+
+    def handler(req: httpx.Request):
+        return httpx.Response(500)
+
+    async def go():
+        db, od, svc = await make_service(tmp_path, handler)
+        seen = []
+        od.backup = stratz_backup({}, seen)
+
+        def broken(req):
+            return httpx.Response(200, text="You cannot use more than 2 IP Addresses every 15 minutes")
+
+        od.backup.client = httpx.AsyncClient(transport=httpx.MockTransport(broken))
+        restore = no_sleep()
+        try:
+            with pytest.raises(OpenDotaError):
+                await svc.last_match_id(1000)
+        finally:
+            restore()
+        await od.close()
+        await db.close()
+
+    run(go())
