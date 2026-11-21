@@ -1,5 +1,7 @@
 # Who threw? (Dota 2 verdict bot for Telegram)
 
+[![CI/CD](https://github.com/nekunekuneku/tg-dota-rating-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/nekunekuneku/tg-dota-rating-bot/actions/workflows/ci.yml)
+
 A small Telegram bot for a friend group. Ask it about a match and it tells you who carried and who threw.
 
 - **Only speaks when asked.** No auto-posts, no weekly spam.
