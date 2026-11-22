@@ -327,12 +327,19 @@ KAWCH = {
     ],
 }
 
+NICK_SMURF = {
+    "name": "Nick",  # same person: the jokes call the smurf Nick too
+    "bad": NICK["bad"] + ["Hopped on the smurf so the bot wouldn't recognise {name}. It did"],
+    "good": NICK["good"] + ["Smurfing to pad the stats the bot reads. Suspicious"],
+}
+
 PERSONAL: dict[int, dict[str, list]] = {
     100648413: ANDREW,
     103826341: GS,
     129229916: GS_SMURF,
     55636689: MIC,
     55775392: NICK,
+    133695213: NICK_SMURF,
     191871359: KAWCH,
 }
 
