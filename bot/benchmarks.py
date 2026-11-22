@@ -72,3 +72,52 @@ def fill_benchmarks(match: dict, by_hero: dict[int, dict]) -> None:
                 bench[key] = {"raw": raws[key], "pct": round(pct, 3)}
         if bench:
             p["benchmarks"] = bench
+
+
+MIN_HERO_POINTS = 8  # fewer cached games than this on a hero: use the all-heroes curve
+
+
+def curves_from_matches(matches: list[dict]) -> dict[int, dict]:
+    """Benchmark curves rebuilt from matches OpenDota already gave us.
+
+    Every OpenDota match has, per player, {stat: {raw, pct}}: their number and
+    where it ranks for that hero. Enough of those per hero trace the same curve
+    /benchmarks returns. Used when OpenDota is down and a match came from
+    STRATZ without benchmarks. Returns {hero_id: {"result": {stat: points}}},
+    with key 0 = all heroes together (rougher, but better than nothing).
+    """
+    pts: dict[int, dict[str, list[tuple[float, float]]]] = {}
+    for m in matches:
+        if m.get("source") == "stratz":
+            continue
+        for p in m.get("players") or []:
+            for key, b in (p.get("benchmarks") or {}).items():
+                if key in BENCH_KEYS and b and b.get("pct") is not None and b.get("raw") is not None:
+                    pair = (float(b["pct"]), float(b["raw"]))
+                    hero = int(p.get("hero_id") or 0)
+                    if hero:
+                        pts.setdefault(hero, {}).setdefault(key, []).append(pair)
+                    pts.setdefault(0, {}).setdefault(key, []).append(pair)
+
+    def curve(pairs: list[tuple[float, float]], bucketed: bool) -> list[dict]:
+        pairs = sorted(pairs)
+        if bucketed:  # many heroes mixed: the median value around each 5% step
+            out = []
+            for i in range(21):
+                q = i / 20
+                near = sorted(v for p, v in pairs if abs(p - q) <= 0.05)
+                if near:
+                    out.append((q, near[len(near) // 2]))
+            pairs = out
+        points, top = [], 0.0
+        for p, v in pairs:
+            top = max(top, v)  # a higher percentile never has a lower value
+            points.append({"percentile": p, "value": top})
+        return points
+
+    out = {}
+    for hero, stats in pts.items():
+        result = {k: curve(v, bucketed=hero == 0) for k, v in stats.items() if hero == 0 or len(v) >= MIN_HERO_POINTS}
+        if result:
+            out[hero] = {"result": result}
+    return out

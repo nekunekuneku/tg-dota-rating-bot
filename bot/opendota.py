@@ -3,8 +3,12 @@
 Match data comes from OpenDota: the basic data is available as soon as Valve
 publishes the match, so the bot can answer right away. Stats that need the
 replay (wards, stuns, lanes) show up after OpenDota parses it; the "Refresh"
-button re-checks. If OpenDota's per-player match lists fail, STRATZ (when a
-key is set) supplies the match IDs instead - see stratz.py.
+button re-checks.
+
+With a STRATZ key, STRATZ is the backup: for players' match lists when
+OpenDota's fail, and for whole matches when OpenDota is down. After a
+timeout or connection error, OpenDota is skipped for DOWN_FOR seconds so
+every request doesn't wait out the timeout first. See stratz.py.
 """
 
 from __future__ import annotations
@@ -15,7 +19,7 @@ import time
 
 import httpx
 
-from .benchmarks import fill_benchmarks, needs_benchmarks
+from .benchmarks import curves_from_matches, fill_benchmarks, needs_benchmarks
 from .db import DB
 from .scoring import is_parsed
 from .stratz import Stratz, StratzError
@@ -43,6 +47,8 @@ RECENT_TTL = 3 * 60
 PROFILE_TTL = 6 * 3600
 HEROES_TTL = 7 * 86400
 BENCH_TTL = 7 * 86400
+STRATZ_MATCH_TTL = 30 * 60  # STRATZ copies are temporary: OpenDota's replaces them when it's back
+DOWN_FOR = 2 * 60  # after OpenDota times out, go straight to STRATZ for this long
 
 
 class OpenDotaError(Exception):
@@ -62,6 +68,8 @@ def slim_match(m: dict) -> dict:
 
 
 def unparsed_ttl(m: dict) -> int:
+    if m.get("source") == "stratz":
+        return STRATZ_MATCH_TTL
     ended = (m.get("start_time") or 0) + (m.get("duration") or 0)
     return OLD_UNPARSED_TTL if time.time() - ended > OLD_AFTER else UNPARSED_TTL
 
@@ -75,7 +83,10 @@ class OpenDota:
     def __init__(self, db: DB, api_key: str | None = None, concurrency: int = 6, backup: Stratz | None = None):
         self.db = db
         self.api_key = api_key
-        self.backup = backup  # STRATZ, for players' match lists when OpenDota's fail
+        self.backup = backup  # STRATZ, for when OpenDota fails
+        self._down_until = 0.0  # monotonic time; while in the future, skip OpenDota (only with a backup)
+        self._curves: dict | None = None  # benchmark curves rebuilt from cached matches
+        self._curves_at = 0.0
         self.sem = asyncio.Semaphore(concurrency)
         self.client = httpx.AsyncClient(base_url=BASE, timeout=httpx.Timeout(25.0, connect=10.0), headers={"User-Agent": "dota-verdict-bot"})
         self._heroes: dict[int, str] = {}
@@ -87,7 +98,12 @@ class OpenDota:
         if self.backup:
             await self.backup.close()
 
+    def opendota_down(self) -> bool:
+        return bool(self.backup) and time.monotonic() < self._down_until
+
     async def _request(self, method: str, path: str, tries: int = 3, **params) -> dict | list | None:
+        if self.opendota_down():
+            raise OpenDotaError("OpenDota is down")
         if self.api_key:
             params["api_key"] = self.api_key
         for attempt in range(tries):
@@ -96,6 +112,10 @@ class OpenDota:
                     r = await self.client.request(method, path, params=params)
                 except httpx.HTTPError as e:
                     log.warning("OpenDota %s %s failed: %s", method, path, e)
+                    if self.backup:
+                        # Not answering at all: don't retry, and skip it for a while.
+                        self._down_until = time.monotonic() + DOWN_FOR
+                        raise OpenDotaError("OpenDota is not responding") from e
                     if attempt == tries - 1:
                         raise OpenDotaError("OpenDota is not responding, try again in a minute") from e
                     await asyncio.sleep(1 + attempt)
@@ -133,15 +153,37 @@ class OpenDota:
                 data, fetched_at, permanent = entry
                 if permanent or time.time() - fetched_at < unparsed_ttl(data):
                     return data
-        raw = await self._request("GET", f"/matches/{match_id}")
+        try:
+            raw = await self._request("GET", f"/matches/{match_id}")
+        except OpenDotaError as e:
+            if not self.backup:
+                raise
+            return await self._match_from_stratz(match_id, key, e)
         if not raw or not has_real_data(raw):
             # Brand-new matches come back as a stub (no heroes, 0 duration) until
-            # OpenDota pulls them from Valve. Don't cache or rate those.
-            return None
+            # OpenDota pulls them from Valve. Don't cache or rate those - but
+            # STRATZ may already have it.
+            return await self._match_from_stratz(match_id, key, None) if self.backup else None
         m = slim_match(raw)
         await self._ensure_benchmarks(m)
         parsed = is_parsed(m)
         await self.db.cache_put(key, m, permanent=parsed)
+        return m
+
+    async def _match_from_stratz(self, match_id: int, key: str, error: OpenDotaError | None) -> dict | None:
+        if error:
+            log.warning("OpenDota match %s failed (%s), using STRATZ", match_id, error)
+        try:
+            m = await self.backup.match(match_id)
+        except StratzError as e:
+            log.warning("STRATZ backup failed too: %s", e)
+            if error:
+                raise error from e
+            return None
+        if m is None:
+            return None
+        await self._ensure_benchmarks(m)
+        await self.db.cache_put(key, m, permanent=False)
         return m
 
     async def request_parse(self, match_id: int) -> None:
@@ -159,7 +201,23 @@ class OpenDota:
             b = await self.hero_benchmarks(hero_id)
             if b:
                 by_hero[hero_id] = b
+        still = missing - by_hero.keys()
+        if still:
+            # OpenDota is down (STRATZ matches have no benchmarks): use curves
+            # rebuilt from the matches already in the cache.
+            curves = await self._cached_curves()
+            base = (curves.get(0) or {}).get("result") or {}
+            for hero_id in still:
+                result = {**base, **((curves.get(hero_id) or {}).get("result") or {})}
+                if result:
+                    by_hero[hero_id] = {"result": result}
         fill_benchmarks(m, by_hero)
+
+    async def _cached_curves(self) -> dict:
+        if self._curves is None or time.monotonic() - self._curves_at > 3600:
+            self._curves = curves_from_matches(await self.db.cache_values("match4:"))
+            self._curves_at = time.monotonic()
+        return self._curves
 
     async def hero_benchmarks(self, hero_id: int) -> dict | None:
         key = f"bench:{hero_id}"
@@ -169,7 +227,7 @@ class OpenDota:
         try:
             data = await self._request("GET", "/benchmarks", hero_id=hero_id)
         except OpenDotaError:
-            return None
+            return await self.db.cache_get(key, None)  # an old copy beats none
         if data:
             await self.db.cache_put(key, data)
         return data
@@ -243,9 +301,10 @@ class OpenDota:
             try:
                 data = await self._request("GET", "/heroes")
             except OpenDotaError:
-                data = None
-            if data:
-                await self.db.cache_put("heroes", data)
+                data = await self.db.cache_get("heroes", None)  # an old copy beats none
+            else:
+                if data:
+                    await self.db.cache_put("heroes", data)
         if data:
             self._heroes = {int(h["id"]): h["localized_name"] for h in data}
         return self._heroes
@@ -264,7 +323,8 @@ class OpenDota:
                 ids = await self._request("GET", "/constants/ability_ids") or {}
                 info = await self._request("GET", "/constants/abilities") or {}
             except OpenDotaError:
-                return {}
+                old = await self.db.cache_get("ability_names", None)  # an old copy beats none
+                return {int(k): v for k, v in old.items()} if old else {}
             data = {}
             for aid, name in ids.items():
                 if "special_bonus" in name or not aid.isdigit():

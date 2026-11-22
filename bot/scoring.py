@@ -146,6 +146,7 @@ class MatchRating:
     best_loser: PlayerRating | None = None
     threw: list[PlayerRating] = field(default_factory=list)
     confidence: float = 1.0  # share of weight that had data, averaged
+    source: str = "opendota"  # "stratz" when OpenDota was down and STRATZ filled in
 
     def player_by_account(self, account_id: int) -> PlayerRating | None:
         for p in self.players:
@@ -556,6 +557,7 @@ def rate_match(match: dict) -> MatchRating:
         game_mode=int(match.get("game_mode") or 0),
         lobby_type=int(match.get("lobby_type") or 0),
         parsed=is_parsed(match),
+        source=match.get("source") or "opendota",
         players=ratings,
         confidence=round(sum(coverages) / len(coverages), 2) if coverages else 0.0,
     )

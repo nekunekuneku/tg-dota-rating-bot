@@ -122,6 +122,11 @@ class DB:
             return None
         return json.loads(data)
 
+    async def cache_values(self, prefix: str) -> list:
+        """Every cached value whose key starts with `prefix`, whatever its age."""
+        async with self.conn.execute("SELECT data FROM cache WHERE key LIKE ?", (prefix + "%",)) as cur:
+            return [json.loads(row[0]) async for row in cur]
+
     async def cache_entry(self, key: str) -> tuple[dict | list, int, bool] | None:
         """(data, fetched_at, permanent), whatever its age."""
         async with self.conn.execute("SELECT data, fetched_at, permanent FROM cache WHERE key = ?", (key,)) as cur:

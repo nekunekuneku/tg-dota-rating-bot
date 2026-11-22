@@ -248,6 +248,8 @@ def summary(
             "\n⚠️ <i>Replay not parsed yet, so roles and some stats may be wrong. "
             "Give it a few minutes, then tap 🔄 Refresh.</i>"
         )
+    if m.source == "stratz":
+        lines.append("\n🛟 <i>OpenDota is down, so this came from STRATZ. Scores may differ a little.</i>")
     return "\n".join(lines)
 
 

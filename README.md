@@ -70,7 +70,7 @@ python -m bot
 
 The bot uses long polling, so you don't need a public URL. Any small VPS, a Raspberry Pi or your PC works. Match data is cached in `bot.sqlite3` so repeat lookups are instant.
 
-If OpenDota's player match lists go down (it happens), set `STRATZ_API_KEY` in `.env` (free at [stratz.com/api](https://stratz.com/api)) and the bot gets the match IDs from STRATZ instead. Use the key on one server only: STRATZ allows at most 2 IP addresses per key every 15 minutes.
+OpenDota goes down sometimes. With `STRATZ_API_KEY` in `.env` (free at [stratz.com/api](https://stratz.com/api)), the bot falls back to STRATZ for match lists and whole matches, and says so on the card ("came from STRATZ"). Scores from STRATZ are close but not identical: stuns are skipped (STRATZ counts them differently), and hero percentiles are rebuilt from games already in the cache. Use the key on one server only: STRATZ allows at most 2 IP addresses per account every 15 minutes.
 
 The OpenDota free tier (no key) is enough for a friend group. The first `/month` call for a big group can take a minute because it fetches every match once. After that, matches come from the cache.
 
